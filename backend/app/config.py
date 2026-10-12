@@ -32,6 +32,9 @@ class Settings(BaseSettings):
 
     # ── 数据库（业务表 + LangGraph checkpointer 复用同一库） ─────
     database_url: str = "postgresql://interview:interview@localhost:5432/interview"
+    # checkpointer 连接池大小（多线程并发面试时按需检出独立连接，避免共享单连接）
+    checkpointer_pool_min_size: int = 1
+    checkpointer_pool_max_size: int = 20
 
     # ── 面试业务配置 ─────────────────────────────────────────────
     default_max_follow_ups: int = 2

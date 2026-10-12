@@ -10,7 +10,7 @@ from app.exceptions import register_exception_handlers
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：可选执行建表兜底（默认走 Alembic）。"""
+    """应用生命周期：可选执行建表兜底（默认走 Alembic），关闭时释放连接池。"""
     settings = get_settings()
     if settings.auto_create_tables:
         from app.db.base import Base
@@ -24,6 +24,11 @@ async def lifespan(app: FastAPI):
 
         get_interview_graph()
     yield
+
+    # 释放 checkpointer 连接池（懒加载模式下若从未使用则为空操作）
+    from app.graph.builder import close_interview_graph
+
+    close_interview_graph()
 
 
 app = FastAPI(

@@ -12,7 +12,7 @@ langgraph-checkpoint-postgres~=2.0.0   # PostgresSaver（2.x 与 langgraph>=0.5 
 
 # ── 数据 / 迁移 ─────────────────────────
 sqlalchemy~=2.0.30
-psycopg[binary]~=3.2.0           # PostgreSQL 驱动
+psycopg[binary,pool]~=3.2.0       # PostgreSQL 驱动（pool extra：checkpointer 连接池）
 alembic~=1.13.0
 
 # ── 配置 / 校验 ─────────────────────────
