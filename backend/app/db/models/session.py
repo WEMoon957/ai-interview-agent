@@ -31,6 +31,8 @@ class InterviewSession(TimestampMixin, Base):
         String(64), nullable=False, unique=True, index=True
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 《安全知情协议》同意时间（P1-7 合规声明）；NULL 表示未同意，面试不可进行
+    consent_agreed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     template = relationship("InterviewTemplate", lazy="selectin")
     candidate = relationship("Candidate", lazy="selectin")

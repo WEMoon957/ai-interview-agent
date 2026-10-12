@@ -19,6 +19,52 @@
         <p>正在进入面试…</p>
       </div>
 
+      <!-- 安全知情协议（未勾选同意不可进入面试） -->
+      <div v-else-if="consentRequired" class="consent-card">
+        <div class="consent-icon">🔒</div>
+        <h2>安全知情协议</h2>
+        <p class="consent-sub">开始面试前，请阅读并同意以下条款</p>
+        <div class="consent-body">
+          <ol>
+            <li>
+              <strong>面试方式</strong>：本次面试由 AI 智能体以文字对话方式进行，
+              你提交的全部回答将被完整记录，用于生成面试评估报告。
+            </li>
+            <li>
+              <strong>数据用途</strong>：你的简历与问答内容仅用于本次招聘评估，
+              不会用于其他用途。
+            </li>
+            <li>
+              <strong>结果说明</strong>：AI 评分结果仅作为招聘参考，不构成唯一录用依据，
+              最终结果以人工复核为准。
+            </li>
+            <li>
+              <strong>数据安全</strong>：面试数据将被安全存储，除招聘流程相关人员外，
+              不会向无关第三方披露。
+            </li>
+            <li>
+              <strong>信息保护</strong>：请勿在回答中提供身份证号、银行账号等
+              与面试无关的敏感个人信息。
+            </li>
+            <li>
+              <strong>退出权利</strong>：如你不同意本协议，请勿开始面试，
+              可直接关闭页面或联系招聘方。
+            </li>
+          </ol>
+        </div>
+        <label class="consent-check">
+          <input type="checkbox" v-model="consentChecked" />
+          <span>我已阅读并同意《安全知情协议》，同意将上述信息用于面试评估</span>
+        </label>
+        <button
+          class="submit-btn consent-btn"
+          :disabled="!consentChecked || agreeing"
+          @click="handleAgree"
+        >
+          {{ agreeing ? '提交中…' : '同意并开始面试' }}
+        </button>
+      </div>
+
       <!-- 面试进行中 -->
       <template v-else-if="status !== 'finished'">
         <!-- 开场白 -->
@@ -75,7 +121,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { getInterviewContext, submitAnswer } from '../api'
+import { getInterviewContext, submitAnswer, agreeConsent } from '../api'
 
 const route = useRoute()
 const token = route.params.token
@@ -91,6 +137,11 @@ const submitting = ref(false)
 const lastType = ref('')
 const errorMsg = ref('')
 
+// 安全知情协议（未同意前不进入面试）
+const consentRequired = ref(false)
+const consentChecked = ref(false)
+const agreeing = ref(false)
+
 const progressPercent = computed(() => {
   if (!progress.value.total) return 0
   return Math.round((progress.value.current / progress.value.total) * 100)
@@ -101,6 +152,12 @@ async function loadContext() {
   errorMsg.value = ''
   try {
     const data = await getInterviewContext(token)
+    if (data.status === 'consent_required') {
+      // 未同意协议：仅展示协议页，不进入面试
+      consentRequired.value = true
+      return
+    }
+    consentRequired.value = false
     opening.value = data.opening || ''
     question.value = data.question || ''
     questionId.value = data.question_id || ''
@@ -110,6 +167,19 @@ async function loadContext() {
     errorMsg.value = e.message || '加载失败，请检查后端服务'
   } finally {
     loading.value = false
+  }
+}
+
+async function handleAgree() {
+  if (!consentChecked.value || agreeing.value) return
+  agreeing.value = true
+  try {
+    await agreeConsent(token)
+    await loadContext()
+  } catch (e) {
+    errorMsg.value = e.message || '提交失败，请重试'
+  } finally {
+    agreeing.value = false
   }
 }
 
@@ -328,6 +398,84 @@ onMounted(loadContext)
   cursor: not-allowed;
 }
 
+/* ── 安全知情协议 ────────────────────────────── */
+.consent-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 32px;
+}
+
+.consent-icon {
+  font-size: 40px;
+  text-align: center;
+}
+
+.consent-card h2 {
+  font-size: 22px;
+  color: #1f2937;
+  text-align: center;
+  margin: 12px 0 6px;
+}
+
+.consent-sub {
+  text-align: center;
+  color: #6b7280;
+  font-size: 14px;
+  margin-bottom: 20px;
+}
+
+.consent-body {
+  background: #f9fafb;
+  border: 1px solid #f3f4f6;
+  border-radius: 10px;
+  padding: 18px 20px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin-bottom: 20px;
+}
+
+.consent-body ol {
+  margin: 0;
+  padding-left: 20px;
+  color: #4b5563;
+  font-size: 14px;
+  line-height: 1.9;
+}
+
+.consent-body li + li {
+  margin-top: 8px;
+}
+
+.consent-body strong {
+  color: #1f2937;
+}
+
+.consent-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  color: #374151;
+  line-height: 1.6;
+  cursor: pointer;
+  margin-bottom: 20px;
+}
+
+.consent-check input {
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  accent-color: #6366f1;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.consent-btn {
+  width: 100%;
+  padding: 12px;
+}
+
 .finished {
   text-align: center;
   padding: 60px 20px;
@@ -420,6 +568,19 @@ onMounted(loadContext)
     width: 100%;
     padding: 14px;
     font-size: 16px;
+  }
+
+  .consent-card {
+    padding: 20px 16px;
+  }
+
+  .consent-body {
+    max-height: 46vh;
+    padding: 14px 16px;
+  }
+
+  .consent-body ol {
+    font-size: 13px;
   }
 
   .finished {

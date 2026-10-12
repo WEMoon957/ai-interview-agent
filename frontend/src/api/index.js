@@ -27,6 +27,8 @@ export const getReport = (sessionId) => request.get(`/admin/sessions/${sessionId
 // ── 候选人端 ───────────────────────────────────────
 export const getInterviewContext = (token) => request.get(`/interview/${token}`)
 
+export const agreeConsent = (token) => request.post(`/interview/${token}/consent`)
+
 export const submitAnswer = (token, answer) =>
   request.post(`/interview/${token}/answer`, { answer })
 

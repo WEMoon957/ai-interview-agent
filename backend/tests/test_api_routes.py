@@ -7,6 +7,7 @@
 """
 import importlib
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from langchain_core.runnables import RunnableLambda
@@ -17,6 +18,9 @@ import app.api.interview as interview_mod
 from app.api.schemas import AnswerSubmit
 from app.models.schemas import AnswerScore
 
+# 本文件聚焦 interrupt 链路，会话默认视为已同意协议；协议门禁见 test_consent_gate.py
+CONSENT_AGREED_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
 
 class FakeSession:
     def __init__(self, thread_id, status="pending"):
@@ -24,6 +28,7 @@ class FakeSession:
         self.thread_id = thread_id
         self.status = status
         self.started_at = None
+        self.consent_agreed_at = CONSENT_AGREED_AT
 
 
 class FakeDB:

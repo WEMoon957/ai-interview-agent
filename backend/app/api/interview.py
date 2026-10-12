@@ -19,12 +19,30 @@ from app.graph.builder import get_interview_graph
 
 router = APIRouter(prefix="/interview", tags=["interview"])
 
+# 未同意《安全知情协议》时的统一提示
+CONSENT_REQUIRED_MSG = "请先阅读并同意《安全知情协议》后再进行面试"
+
 
 def _load_session(db: Session, token: str) -> InterviewSession:
     session = db.query(InterviewSession).filter(InterviewSession.token == token).first()
     if session is None:
         raise BizError(404, "会话不存在或 token 无效", http_status=404)
     return session
+
+
+def _consent_payload(sess: InterviewSession) -> dict:
+    """协议同意状态（候选人端门禁与服务端校验共用）。"""
+    return {
+        "required": True,
+        "agreed": sess.consent_agreed_at is not None,
+        "agreed_at": sess.consent_agreed_at.isoformat() if sess.consent_agreed_at else None,
+    }
+
+
+def _ensure_consent(sess: InterviewSession) -> None:
+    """未同意协议时拒绝进入面试（服务端强校验，防止绕过前端门禁）。"""
+    if sess.consent_agreed_at is None:
+        raise BizError(403, CONSENT_REQUIRED_MSG, http_status=403)
 
 
 def _build_initial_state(db: Session, sess: InterviewSession) -> dict:
@@ -95,8 +113,25 @@ def _progress(values: dict, current_idx: int | None = None) -> dict:
 
 @router.get("/{token}")
 def get_context(token: str, db: Session = Depends(get_db)):
-    """获取面试上下文（首次调用触发跑图并挂起在首题）。"""
+    """获取面试上下文（首次调用触发跑图并挂起在首题）。
+
+    未同意《安全知情协议》时不跑图、不返回题目，仅返回 consent_required（前端展示协议页）。
+    """
     sess = _load_session(db, token)
+
+    if sess.consent_agreed_at is None:
+        return ok(
+            {
+                "session_id": str(sess.id),
+                "opening": "",
+                "question": "",
+                "question_id": "",
+                "progress": {"current": 0, "total": 0},
+                "status": "consent_required",
+                "consent": _consent_payload(sess),
+            }
+        )
+
     graph = get_interview_graph()
     config = {"configurable": {"thread_id": sess.thread_id}}
 
@@ -130,6 +165,7 @@ def get_context(token: str, db: Session = Depends(get_db)):
                 "question_id": question_id,
                 "progress": _progress(values, current_idx),
                 "status": "running",
+                "consent": _consent_payload(sess),
             }
         )
 
@@ -144,6 +180,7 @@ def get_context(token: str, db: Session = Depends(get_db)):
                 "question_id": "",
                 "progress": {"current": total, "total": total},
                 "status": "finished",
+                "consent": _consent_payload(sess),
             }
         )
 
@@ -156,14 +193,26 @@ def get_context(token: str, db: Session = Depends(get_db)):
             "question_id": (interrupt_value or {}).get("question_id", ""),
             "progress": _progress(values, (interrupt_value or {}).get("current_idx", 0)),
             "status": "running",
+            "consent": _consent_payload(sess),
         }
     )
+
+
+@router.post("/{token}/consent")
+def agree_consent(token: str, db: Session = Depends(get_db)):
+    """候选人勾选同意《安全知情协议》（幂等：重复调用保留首次同意时间）。"""
+    sess = _load_session(db, token)
+    if sess.consent_agreed_at is None:
+        sess.consent_agreed_at = datetime.now(timezone.utc)
+        db.commit()
+    return ok(_consent_payload(sess))
 
 
 @router.post("/{token}/answer")
 def submit_answer(token: str, payload: AnswerSubmit, db: Session = Depends(get_db)):
     """提交回答：恢复图执行，返回追问 / 下一题 / 完成。"""
     sess = _load_session(db, token)
+    _ensure_consent(sess)
     graph = get_interview_graph()
     config = {"configurable": {"thread_id": sess.thread_id}}
 

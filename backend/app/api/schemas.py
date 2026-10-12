@@ -73,8 +73,19 @@ class Progress(BaseModel):
     total: int
 
 
+class ConsentInfo(BaseModel):
+    """《安全知情协议》同意状态。"""
+
+    required: bool = True
+    agreed: bool = False
+    agreed_at: str | None = None
+
+
 class InterviewContext(BaseModel):
-    """候选人面试上下文。"""
+    """候选人面试上下文。
+
+    status 为 consent_required 时表示尚未同意协议（此时 question / opening 为空）。
+    """
 
     session_id: str
     opening: str
@@ -82,6 +93,7 @@ class InterviewContext(BaseModel):
     question_id: str
     progress: Progress
     status: str
+    consent: ConsentInfo | None = None
 
 
 class AnswerSubmit(BaseModel):
