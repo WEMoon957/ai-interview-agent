@@ -24,7 +24,8 @@ request.interceptors.response.use(
     const msg =
       error.response?.data?.message || error.message || '网络错误，请检查后端服务是否启动'
     ElMessage.error(msg)
-    return Promise.reject(error)
+    // 统一抛出业务文案，避免调用方只能拿到 "Request failed with status code xxx"
+    return Promise.reject(new Error(msg))
   },
 )
 

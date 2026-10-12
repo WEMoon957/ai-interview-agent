@@ -19,6 +19,13 @@
         <p>正在进入面试…</p>
       </div>
 
+      <!-- 加载失败：显示具体原因并提供重试（原实现把错误静默吞掉，页面会卡在无法操作的状态） -->
+      <div v-else-if="errorMsg" class="error-card">
+        <div class="error-icon">⚠️</div>
+        <p class="error-text">{{ errorMsg }}</p>
+        <button class="submit-btn" @click="loadContext">重试</button>
+      </div>
+
       <!-- 安全知情协议（未勾选同意不可进入面试） -->
       <div v-else-if="consentRequired" class="consent-card">
         <div class="consent-icon">🔒</div>
@@ -396,6 +403,28 @@ onMounted(loadContext)
 .submit-btn:disabled {
   background: #c7d2fe;
   cursor: not-allowed;
+}
+
+/* ── 加载失败 ────────────────────────────────── */
+.error-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 48px 32px;
+  text-align: center;
+}
+
+.error-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+
+.error-text {
+  color: #b91c1c;
+  font-size: 15px;
+  line-height: 1.7;
+  margin-bottom: 24px;
+  word-break: break-all;
 }
 
 /* ── 安全知情协议 ────────────────────────────── */
