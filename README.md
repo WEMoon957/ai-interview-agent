@@ -104,6 +104,21 @@ class InterviewState(TypedDict):
 ```python
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.postgres import PostgresSaver
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
+
+def _create_checkpointer() -> PostgresSaver:
+    """进程级单例：psycopg 连接池 + 自建检查点表（多线程并发安全、坏连接自动重建）"""
+    pool = ConnectionPool(
+        conninfo=settings.checkpointer_dsn,
+        min_size=settings.checkpointer_pool_min_size,
+        max_size=settings.checkpointer_pool_max_size,
+        kwargs={"autocommit": True, "row_factory": dict_row},  # PostgresSaver 硬性要求
+        open=True,
+    )
+    saver = PostgresSaver(pool)   # conn 为 ConnectionPool 时不可再传 pipe
+    saver.setup()                 # 幂等：自建 checkpoints/checkpoint_blobs/checkpoint_writes
+    return saver
 
 def build_interview_graph():
     g = StateGraph(InterviewState)
@@ -125,7 +140,7 @@ def build_interview_graph():
     )
     g.add_edge("final_report", END)
 
-    return g.compile(checkpointer=PostgresSaver.from_conn_string(DB_URL))
+    return g.compile(checkpointer=_create_checkpointer())
 ```
 
 ### 评分节点（结构化输出）
@@ -256,7 +271,7 @@ interview-agent/
 │   │   ├── main.py                 # FastAPI 入口
 │   │   ├── graph/
 │   │   │   ├── state.py            # InterviewState 定义
-│   │   │   ├── builder.py          # 图构建 + checkpointer
+│   │   │   ├── builder.py          # 图构建 + checkpointer（连接池单例 + close 释放）
 │   │   │   ├── nodes/
 │   │   │   │   ├── load_context.py
 │   │   │   │   ├── ask_question.py
@@ -269,6 +284,9 @@ interview-agent/
 │   │   │   └── scoring.py          # 维度加权汇总
 │   │   ├── api/                    # admin / interview 路由
 │   │   └── db/                     # SQLAlchemy models + migrations
+│   ├── scripts/
+│   │   └── checkpointer_concurrency.py   # checkpointer 并发压测 + 连接中断自愈探针
+│   ├── tests/                      # pytest 回归用例（基于 mock/fake LLM，不依赖外部服务）
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── frontend/
@@ -290,6 +308,10 @@ LLM_MODEL=deepseek-chat            # 或 gpt-4o / qwen-plus / glm-4
 LLM_API_KEY=sk-xxx
 LLM_BASE_URL=https://api.deepseek.com   # OpenAI 兼容地址，GPT 可省略
 DATABASE_URL=postgresql://interview:interview@localhost:5432/interview
+
+# LangGraph checkpointer 连接池大小（多线程并发面试各自检出独立连接）
+CHECKPOINTER_POOL_MIN_SIZE=1
+CHECKPOINTER_POOL_MAX_SIZE=20
 ```
 
 ### 启动
@@ -330,6 +352,32 @@ graph.invoke({
 # 候选人答题（执行到下一个 interrupt）
 graph.invoke({"messages": [("user", "我主导过日均千万级 API 网关改造……")]}, config)
 ```
+
+### 回归验证（自动化测试 + 并发压测）
+
+```bash
+cd backend
+pytest tests/ -q                     # 全量回归用例（mock/fake LLM，不依赖真实 LLM 与外部服务）
+
+# checkpointer 并发压测 + 连接中断自愈探针（需可用的 PostgreSQL）
+python scripts/checkpointer_concurrency.py --impl current --mode both --threads 30 --ops 20 --with-recovery
+```
+
+压测脚本说明（`backend/scripts/checkpointer_concurrency.py`）：
+
+- `--impl current|single|pool`：分别跑生产实现 `builder._create_checkpointer()`、单长连接旧实现、连接池实现，便于修复前后同口径对比；
+- `--mode saver|graph|both`：直接压 checkpointer 的 `put/get_tuple`，或经 `graph.invoke` → `interrupt` → `Command(resume=...)` 跑端到端面试流（fake LLM，`session_id` 留空跳过业务落库）；
+- 每个线程使用独立 `thread_id`（uuid4）并校验读回数据的归属与内容，用于发现跨线程串话；结束后自动删除 `stress-*` 数据。
+
+**实测结论**（30 线程 × 20 轮，2026-10-12）：
+
+| 指标 | 单长连接（旧实现） | 连接池（当前实现） |
+| --- | --- | --- |
+| 线程成功 / 连接级异常 / 串话 | 30/30 · 0 · 0 | 30/30 · 0 · 0 |
+| 总耗时（wall） | 0.353s | 0.369s |
+| 连接被 DB 端强制中断后的自愈 | 探针 0/5 成功，永久失败（须重启进程） | 探针 3/5 成功，坏连接被丢弃并重建 |
+
+> 耗时未随连接池下降的根因：`langgraph-checkpoint-postgres 2.0.25` 的 `PostgresSaver._cursor()` 对**每次操作**持有实例级 `threading.Lock`，单个 saver 实例的 DB 临界区恒为串行（与连接是单条还是池无关，对照实验已证实）。连接池解决的是「共享可变连接 + 连接失效不可恢复」的健壮性问题；生产耗时由 LLM 调用主导，该锁不构成瓶颈。
 
 ## 10. 扩展方向
 

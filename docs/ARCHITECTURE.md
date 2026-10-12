@@ -70,6 +70,9 @@ interview-agent/
     │   ├── script.py.mako         # 迁移脚本模板（Alembic 生成）
     │   └── versions/
     │       └── 0001_initial.py    # 7 张表 + checkpointer 兼容（首版迁移）
+    ├── scripts/
+    │   └── checkpointer_concurrency.py  # checkpointer 并发压测 + 连接中断自愈探针（--impl single|pool|current）
+    ├── tests/                     # pytest 回归用例（mock/fake LLM，不依赖真实 LLM 与外部服务）
     └── app/
         ├── __init__.py
         ├── main.py                # FastAPI 入口：创建 app、挂载 admin/interview 路由、启动建表/健康检查
@@ -78,7 +81,7 @@ interview-agent/
         ├── graph/
         │   ├── __init__.py
         │   ├── state.py           # InterviewState 及子结构 TypedDict + Reducer
-        │   ├── builder.py         # build_interview_graph(checkpointer) -> 编译后的图
+        │   ├── builder.py         # build_interview_graph(checkpointer) -> 编译后的图（连接池懒加载单例 + close 释放）
         │   ├── route.py           # 条件边 route()：追问/下一题/收尾分流
         │   └── nodes/
         │       ├── __init__.py
@@ -281,6 +284,7 @@ classDiagram
 
     class GraphBuilder {
         +CompiledGraph build_interview_graph(Checkpointer)
+        +void close_interview_graph()
     }
     class LoadContextNode
     class AskQuestionNode
@@ -474,12 +478,12 @@ stateDiagram-v2
 
 **内容**：
 - `requirements.txt`（见第 6 节完整内容）
-- `.env.example`：`LLM_MODEL / LLM_BASE_URL / LLM_API_KEY / LLM_TEMPERATURE / DATABASE_URL` 等（见第 7 节）
+- `.env.example`：`LLM_MODEL / LLM_BASE_URL / LLM_API_KEY / LLM_TEMPERATURE / DATABASE_URL / CHECKPOINTER_POOL_MIN_SIZE / CHECKPOINTER_POOL_MAX_SIZE` 等（见第 7 节）
 - `docker-compose.yml`：`postgres:16` + `api`（Dockerfile 或直接 uvicorn 挂载）
 - `config.py`：`Settings(BaseSettings)`，`@lru_cache get_settings()`
 - `db/base.py`：`Base` + `TimestampMixin(id=UUID, created_at, updated_at)`
 - `db/session.py`：`engine / SessionLocal / get_db`
-- `main.py`：创建 FastAPI app，`/health`，挂载 admin/interview 路由（先占位再于 T05 补全），lifespan 里可选 `Base.metadata.create_all`（MVP 兜底）或引导执行 alembic
+- `main.py`：创建 FastAPI app，`/health`，挂载 admin/interview 路由（先占位再于 T05 补全），lifespan 里可选 `Base.metadata.create_all`（MVP 兜底）或引导执行 alembic；**lifespan 退出时调用 `close_interview_graph()` 释放 checkpointer 连接池**（避免连接泄漏）
 - Alembic 三件套，`env.py` 绑定 `settings.database_url` 与 `Base.metadata`
 
 **验收**：`uvicorn app.main:app` 可启动，`/health` 返回 200；`alembic upgrade head` 可执行（即使暂无表）。
@@ -526,7 +530,7 @@ stateDiagram-v2
 **依赖**：T01（config/checkpointer）、T02（schemas）、T03（llm/scoring/state）
 
 **内容**：
-- `builder.py`：`build_interview_graph(checkpointer)` → `StateGraph(InterviewState)`，边：`START→load_context→ask_question→evaluate`，`evaluate→route` 条件边映射 `{"ask_question","final_report"}`，`final_report→END`；`.compile(checkpointer=PostgresSaver(conn))`（手动创建 `psycopg.connect(dsn, autocommit=True, row_factory=dict_row)` 长连接并 `setup()`）
+- `builder.py`：`build_interview_graph(checkpointer)` → `StateGraph(InterviewState)`，边：`START→load_context→ask_question→evaluate`，`evaluate→route` 条件边映射 `{"ask_question","final_report"}`，`final_report→END`；`.compile(checkpointer=_create_checkpointer())`——checkpointer 用 `psycopg_pool.ConnectionPool`（`kwargs={"autocommit":True,"row_factory":dict_row}`）构造 `PostgresSaver(pool)` 并 `setup()`，作为进程级懒加载单例复用（并发首调加锁防重复建池）；`close_interview_graph()` 负责关闭池
 - `load_context.py`：初始化 `current_idx=0 / follow_up_count=0 / status=running`，写开场白 message
 - `ask_question.py`：区分「首问/追问/下一题」生成问题；`question = interrupt({"status":"waiting_answer","question":...})` 挂起；恢复后把 `AIMessage(question) + HumanMessage(answer)` 写入 messages，并推进 `current_idx`/`follow_up_count`
 - `evaluate.py`：取当前问题 + 最近一条用户回答，构造 Prompt，`get_structured_llm()` 产出 `AnswerScore`，组装 `EvaluationRecord(question_id=...)` 追加到 `evaluations`
@@ -577,7 +581,7 @@ langgraph-checkpoint-postgres~=2.0.0   # PostgresSaver（2.x 与 langgraph>=0.5 
 
 # ── 数据 / 迁移 ─────────────────────────
 sqlalchemy~=2.0.30
-psycopg[binary]~=3.2.0           # PostgreSQL 驱动
+psycopg[binary,pool]~=3.2.0       # PostgreSQL 驱动（pool extra：checkpointer 连接池）
 alembic~=1.13.0
 
 # ── 配置 / 校验 ─────────────────────────
@@ -608,13 +612,30 @@ python-docx~=1.1.0
    ```
 4. **scores JSONB 结构**（`answer_evaluations.scores`）：`{"tech_depth": 8, "experience": 7, ...}`，维度 key 必须与 rubric 对齐，分值 0~该维度 `max_score`。
 5. **评分汇总公式**：维度得分 = 该维度在所有已评分题上的均分；`weighted_score = 维度均分 × weight`；`total_score = Σ weighted_score × 10`（各维度满分 10 时即百分制）。等级阈值：`>=90 强烈推荐`、`>=75 推荐`、`>=60 待定`、`<60 不推荐`。
-6. **checkpointer 复用**：`PostgresSaver(conn)`（`conn = psycopg.connect(checkpointer_dsn, autocommit=True, row_factory=dict_row)`）与业务 ORM 共用同一 `DATABASE_URL`（同一库，不同 schema/表，由 PostgresSaver 自建 `checkpoints` 等表，需在 `alembic` 之外由 PostgresSaver 初始化，首次调用前执行其 `setup()`）。注意 `from_conn_string` 返回 contextmanager，不适合作为应用级单例。
+6. **checkpointer 复用与连接池（并发安全）**：checkpointer 与业务 ORM 共用同一 `DATABASE_URL`（同一库，不同表；`checkpoints` 等表由 PostgresSaver 自建，须在 `alembic` 之外由 `setup()` 初始化，幂等）。**禁止用单条长连接做进程级单例**：psycopg 的 `Connection`/`Cursor` 不支持多线程共享，且连接一旦被 DB 端断开（PG 重启 / 连接被 kill / 网络抖动）会永久失效，后续请求全部报 `psycopg.OperationalError` 直到重启进程（已实测复现）。统一写法：
+   ```python
+   pool = ConnectionPool(
+       conninfo=settings.checkpointer_dsn,
+       min_size=settings.checkpointer_pool_min_size,   # 默认 1
+       max_size=settings.checkpointer_pool_max_size,   # 默认 20
+       kwargs={"autocommit": True, "row_factory": dict_row},
+       open=True,                                      # 显式打开（psycopg_pool 未来默认值将变为 False）
+   )
+   saver = PostgresSaver(pool)   # conn 为 ConnectionPool 时不能传 pipe，否则 ValueError
+   saver.setup()
+   ```
+   池由 `builder.close_interview_graph()` 在 FastAPI lifespan 退出时关闭。注意 `from_conn_string` 返回 contextmanager，不适合作为应用级单例。
+   > 并发行为了解：`langgraph-checkpoint-postgres 2.0.25` 的 `PostgresSaver._cursor()` 对每次操作持有实例级 `threading.Lock`，**单个 saver 实例的 DB 操作恒为串行**（与传入单连接还是连接池无关）。因此连接池解决的是「共享可变连接 + 连接失效不可恢复」，不提升 saver 级吞吐；生产耗时由 LLM 调用主导，该锁不构成瓶颈。
 7. **thread_id 约定**：每个 `interview_sessions.thread_id` = 唯一 UUID；`config = {"configurable": {"thread_id": thread_id}}`；同一 thread_id 中断后可恢复。
 8. **LLM 配置单例**：一律通过 `app/services/llm.py` 的 `get_llm()` / `get_structured_llm()` 获取模型，禁止各节点自行 `ChatOpenAI(...)`。模型/温度/base_url/api_key 全部来自 `config.Settings`。`with_structured_output` 默认走 function-calling；如某提供商不支持，可在 `get_structured_llm()` 里回退 `method="json_schema"` 或 `json_mode`（不改业务代码）。
 9. **追问计数语义**：`follow_up_count` 表示**当前题**已追问次数；进入下一题时在 `ask_question` 内重置为 0；`max_follow_ups` 来自模板（默认 2，`settings.default_max_follow_ups` 兜底）。
 10. **中断/恢复模式**：`ask_question` 用 `interrupt({...})` 挂起并返回问题；恢复用 `graph.invoke(Command(resume=answer), config)`。读当前状态用 `graph.get_state(config)`（取 `.values` 与 `.next`），具体字段以安装的 langgraph 版本为准，工程师需对着该版本 `StateSnapshot` API 核对一次。
 11. **表 ID/审计**：7 张业务表统一 `id`（UUID，主键）、`created_at`、`updated_at`（`TimestampMixin` 提供）。`interview_sessions.token`、`thread_id` 唯一索引。
 12. **时间与序列化**：所有时间存 UTC `datetime`；JSONB 字段存 JSON 可序列化的 dict/list（Pydantic `.model_dump(mode="json")`），禁止直接存 Pydantic 对象。
+13. **并发 / 连接健康回归验证**：
+    - 自动化用例：`cd backend && pytest tests/ -q`（基于 mock/fake LLM，不依赖真实 LLM 与外部服务，可随时全量跑）；
+    - 并发压测：`python scripts/checkpointer_concurrency.py --impl current --mode both --threads 30 --ops 20 --with-recovery`（需可用 PostgreSQL）。`--impl single|pool|current` 用于新旧实现同口径对比；`--mode saver|graph` 分别直接压 `put/get_tuple` 与走 `graph.invoke → interrupt → Command(resume)` 端到端（fake LLM、`session_id` 留空跳过业务落库）；每线程独立 `thread_id`（uuid4）并校验读回数据的归属与内容以检测串话，结束自动清理 `stress-*` 数据；
+    - 实测口径（30 线程 × 20 轮）：修复前后均 30/30 成功、0 连接级异常、0 串话；连接被 DB 端强制中断后，单长连接 0/5 探针成功（永久失败，须重启进程），连接池 3/5 成功（坏连接被丢弃并重建）；总耗时 0.353s（单连接）vs 0.369s（连接池）→ 单 saver 实例吞吐由 langgraph 内部锁决定，连接池收益在连接健壮性与可配置性。
 
 ---
 
