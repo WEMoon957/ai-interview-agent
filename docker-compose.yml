@@ -1,0 +1,52 @@
+# 本地一键起：postgres + api
+# 使用前先 `cp .env.example .env` 并填入真实 LLM_API_KEY
+services:
+  postgres:
+    image: postgres:16
+    container_name: interview-agent-postgres
+    environment:
+      POSTGRES_USER: interview
+      POSTGRES_PASSWORD: interview
+      POSTGRES_DB: interview
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U interview -d interview"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: python:3.11-slim
+    container_name: interview-agent-api
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      # 容器内通过服务名访问 postgres，覆盖 .env 中的 localhost
+      DATABASE_URL: postgresql://interview:interview@postgres:5432/interview
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "pip install -r requirements.txt &&
+             alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  web:
+    build:
+      context: ./frontend
+    container_name: interview-agent-web
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

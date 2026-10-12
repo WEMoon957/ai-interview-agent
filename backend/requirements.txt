@@ -1,0 +1,24 @@
+# ── Web 框架 ─────────────────────────────
+fastapi~=0.115.0
+uvicorn[standard]~=0.30.0
+python-multipart~=0.0.9          # 管理端简历文件上传
+
+# ── LLM / 编排 ───────────────────────────
+langgraph>=0.5,<1.0              # 状态机 + interrupt + checkpointer（>=0.5 消除与 checkpoint-postgres 2.x 的告警）
+langchain~=0.3.0                 # Prompt 模板等生态组件
+langchain-core~=0.3.0            # add_messages 等核心抽象
+langchain-openai~=0.2.0          # OpenAI 兼容协议（DeepSeek/Qwen/GPT/GLM/Claude）
+langgraph-checkpoint-postgres~=2.0.0   # PostgresSaver（2.x 与 langgraph>=0.5 配套）
+
+# ── 数据 / 迁移 ─────────────────────────
+sqlalchemy~=2.0.30
+psycopg[binary]~=3.2.0           # PostgreSQL 驱动
+alembic~=1.13.0
+
+# ── 配置 / 校验 ─────────────────────────
+pydantic~=2.8.0
+pydantic-settings~=2.4.0         # .env 加载（自带 python-dotenv）
+
+# ── 简历解析 ─────────────────────────────
+pdfplumber~=0.11.0
+python-docx~=1.1.0

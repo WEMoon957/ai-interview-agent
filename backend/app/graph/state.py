@@ -1,0 +1,59 @@
+"""面试状态定义：InterviewState 及子结构 + Reducer（唯一真相源，共享知识 #2）。"""
+from operator import add
+from typing import Annotated, TypedDict
+
+from langgraph.graph.message import add_messages
+
+
+class CandidateInfo(TypedDict):
+    """候选人上下文。"""
+
+    name: str
+    resume_text: str
+    job_desc: str  # JD 文本，供出题/评分上下文
+
+
+class QuestionItem(TypedDict):
+    """预设问题项。"""
+
+    id: str  # 问题唯一 id（如 "q1"）
+    text: str  # 问题内容
+
+
+class RubricDimension(TypedDict):
+    """评分维度。"""
+
+    key: str  # 维度 key，如 "tech_depth"
+    name: str  # 中文名，如 "技术深度"
+    description: str  # 评分标准说明
+    weight: float  # 汇总权重，如 0.40
+    max_score: float  # 维度满分，如 10
+
+
+class Evaluation(TypedDict):
+    """逐题评分结果（追加到 evaluations）。"""
+
+    question_id: str
+    scores: dict  # {"tech_depth": 8, ...}
+    comment: str  # 评分理由，含原话佐证
+    follow_up_needed: bool
+    follow_up_question: str  # 追问问题，空串表示无
+
+
+class InterviewState(TypedDict, total=False):
+    """面试状态机总状态。"""
+
+    thread_id: str
+    session_id: str
+    candidate: CandidateInfo
+    questions: list[QuestionItem]
+    rubric: list[RubricDimension]
+    current_idx: int  # 当前题目下标
+    max_follow_ups: int  # 每题追问上限（模板级）
+    follow_up_count: int  # 当前题已追问次数
+    # AI 问题 + 用户回答累加（add_messages reducer）
+    messages: Annotated[list, add_messages]
+    # 逐题评分累加（operator.add：节点返回值必须传 list，否则 reducer 报错）
+    evaluations: Annotated[list[Evaluation], add]
+    status: str  # pending / running / finished
+    report: dict  # 最终报告（final_report 写入）

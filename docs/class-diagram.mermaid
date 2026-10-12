@@ -1,0 +1,177 @@
+classDiagram
+    direction LR
+
+    class InterviewState {
+        +str thread_id
+        +str session_id
+        +CandidateInfo candidate
+        +List~QuestionItem~ questions
+        +List~RubricDimension~ rubric
+        +int current_idx
+        +int max_follow_ups
+        +int follow_up_count
+        +list messages
+        +List~Evaluation~ evaluations
+        +str status
+        +dict report
+    }
+    class CandidateInfo {
+        +str name
+        +str resume_text
+        +str job_desc
+    }
+    class QuestionItem {
+        +str id
+        +str text
+    }
+    class RubricDimension {
+        +str key
+        +str name
+        +str description
+        +float weight
+        +float max_score
+    }
+    class Evaluation {
+        +str question_id
+        +dict scores
+        +str comment
+        +bool follow_up_needed
+        +str follow_up_question
+    }
+
+    class AnswerScore {
+        +dict scores
+        +str comment
+        +bool follow_up_needed
+        +str follow_up_question
+    }
+    class EvaluationRecord {
+        +str question_id
+        +dict scores
+        +str comment
+        +bool follow_up_needed
+        +str follow_up_question
+    }
+    class DimensionScore {
+        +str key
+        +str name
+        +float weight
+        +float score
+        +float weighted_score
+    }
+    class Report {
+        +List~DimensionScore~ dim_scores
+        +float total_score
+        +str verdict
+        +str summary
+    }
+
+    class Settings {
+        +str llm_model
+        +str llm_base_url
+        +str llm_api_key
+        +float llm_temperature
+        +str database_url
+        +int default_max_follow_ups
+    }
+    class LLMService {
+        +ChatOpenAI get_llm()
+        +ChatOpenAI get_structured_llm()
+    }
+    class ResumeParser {
+        +str parse_resume(bytes, str)
+    }
+    class ScoringService {
+        +Report aggregate_report(List~Evaluation~, List~RubricDimension~)
+        +str verdict_from_score(float)
+    }
+
+    class GraphBuilder {
+        +CompiledGraph build_interview_graph(Checkpointer)
+    }
+    class LoadContextNode
+    class AskQuestionNode
+    class EvaluateNode
+    class FinalReportNode
+    class Router {
+        +str route(InterviewState)
+    }
+
+    class JobPosting {
+        +str id
+        +str title
+        +str jd_text
+        +dict requirements
+    }
+    class InterviewTemplate {
+        +str id
+        +str job_id
+        +list questions
+        +list rubric
+        +int duration_limit
+        +int max_follow_ups
+    }
+    class Candidate {
+        +str id
+        +str name
+        +str email
+        +str phone
+    }
+    class Resume {
+        +str id
+        +str candidate_id
+        +str file_url
+        +str parsed_text
+    }
+    class InterviewSession {
+        +str id
+        +str token
+        +str template_id
+        +str candidate_id
+        +str status
+        +str thread_id
+        +datetime started_at
+    }
+    class AnswerEvaluation {
+        +str id
+        +str session_id
+        +str question_id
+        +dict scores
+        +str comment
+        +bool follow_up_needed
+        +datetime ts
+    }
+    class SessionReport {
+        +str id
+        +str session_id
+        +list dim_scores
+        +float total_score
+        +str verdict
+        +str summary
+    }
+
+    InterviewState *-- CandidateInfo
+    InterviewState *-- QuestionItem
+    InterviewState *-- RubricDimension
+    InterviewState *-- Evaluation
+    EvaluationRecord ..> AnswerScore : 由 LLM 输出 + question_id 组装
+    Report *-- DimensionScore
+
+    GraphBuilder ..> InterviewState : 编排
+    GraphBuilder *-- LoadContextNode
+    GraphBuilder *-- AskQuestionNode
+    GraphBuilder *-- EvaluateNode
+    GraphBuilder *-- FinalReportNode
+    GraphBuilder *-- Router
+    AskQuestionNode ..> LLMService : 出题/追问
+    EvaluateNode ..> LLMService : 结构化评分
+    FinalReportNode ..> ScoringService : 汇总报告
+    EvaluateNode ..> AnswerScore : 结构化输出
+
+    InterviewTemplate --> JobPosting : job_id
+    Resume --> Candidate : candidate_id
+    InterviewSession --> InterviewTemplate : template_id
+    InterviewSession --> Candidate : candidate_id
+    AnswerEvaluation --> InterviewSession : session_id
+    SessionReport --> InterviewSession : session_id
+    LLMService --> Settings : 读取配置
