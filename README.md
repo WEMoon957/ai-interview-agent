@@ -415,6 +415,10 @@ FEISHU_HR_DEPARTMENT_IDS=od_xxx       # HR 收件部门（od_ 开头，按部门
 > **按部门收件**：配置 `FEISHU_HR_DEPARTMENT_IDS` 后，每次推送会实时解析该部门的在职成员逐一私聊——
 > 部门进新人自动纳入、离职自动过滤，不用改配置。多个部门用逗号分隔，可与 `FEISHU_HR_OPEN_IDS` 并用。
 
+> **部署到服务器 / 容器时**：必须把 `FEISHU_NOTIFY_TRANSPORT` 改为 `api` 并填 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`——
+> 默认的 `cli` 传输依赖本机 `lark-cli` 与 macOS keychain，Linux 容器里不可用。切到 `api` 后，发送与部门成员
+> 解析都改走飞书 Open API 直连，`tenant_access_token` 带进程内缓存。详见文档第 7 节。
+
 通道自检（不经过面试流程，直接验证 HR 收件人与登录态）：
 
 ```bash

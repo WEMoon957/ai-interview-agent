@@ -344,6 +344,149 @@ def test_resolve_cli_path_nonexistent_falls_back(monkeypatch):
     assert fn.resolve_cli_path("/no/such/binary") is None
 
 
+def test_resolve_department_member_ids_uses_cli_transport_by_default(monkeypatch):
+    """默认 cli 传输：部门解析走 lark-cli（依赖本机环境）。"""
+    called = {"n": 0}
+
+    def fake_cli(path, params, settings):
+        called["n"] += 1
+        return True, {"items": [{"open_id": "ou_c", "status": {"is_activated": True}}]}
+
+    monkeypatch.setattr(fn, "_run_cli_api", fake_cli)
+    ids, err = fn.resolve_department_member_ids(["od_x"], make_settings())
+    assert ids == ["ou_c"] and err == ""
+    assert called["n"] == 1
+
+
+def test_resolve_department_member_ids_uses_api_transport(monkeypatch):
+    """api 传输：部门解析直连 Open API，不再依赖 lark-cli（服务器/容器可跑）。"""
+    called = {"n": 0}
+
+    def fake_api_get(path, params, settings):
+        called["n"] += 1
+        assert path == "/open-apis/contact/v3/users/find_by_department"
+        return True, {"items": [{"open_id": "ou_a", "status": {"is_activated": True}}]}
+
+    monkeypatch.setattr(fn, "_api_get", fake_api_get)
+    settings = make_settings(
+        feishu_notify_transport="api",
+        feishu_hr_open_ids="",
+        feishu_hr_department_ids="od_x",
+        feishu_app_id="cli_x",
+        feishu_app_secret="sec",
+    )
+    ids, err = fn.resolve_department_member_ids(["od_x"], settings)
+    assert ids == ["ou_a"] and err == ""
+    assert called["n"] == 1
+
+
+def test_fetch_department_users_dispatches_by_transport(monkeypatch):
+    """部门成员拉取按传输方式分派：api -> _api_get，cli -> _run_cli_api。"""
+    seen: dict[str, dict] = {}
+
+    def fake_api_get(path, params, settings):
+        seen["api"] = {"path": path, "params": params}
+        return True, {"items": []}
+
+    def fake_cli(path, params, settings):
+        seen["cli"] = {"path": path, "params": params}
+        return True, {"items": []}
+
+    monkeypatch.setattr(fn, "_api_get", fake_api_get)
+    monkeypatch.setattr(fn, "_run_cli_api", fake_cli)
+
+    fn._fetch_department_users(
+        "od-x", "tok-next", make_settings(feishu_notify_transport="api")
+    )
+    assert seen["api"]["path"] == "/open-apis/contact/v3/users/find_by_department"
+    assert seen["api"]["params"]["page_token"] == "tok-next"
+    assert seen["api"]["params"]["department_id_type"] == "open_department_id"
+
+    fn._fetch_department_users("od-x", "", make_settings())  # 默认 cli
+    assert seen["cli"]["path"] == "/open-apis/contact/v3/users/find_by_department"
+
+
+def test_send_via_api_sends_interactive_card(monkeypatch):
+    """api 传输发的是 Markdown 交互卡片（与 lark-cli --markdown 观感一致）。"""
+    import httpx
+
+    captured: dict = {}
+
+    class _Resp:
+        def json(self):
+            return {"code": 0, "data": {"message_id": "om_1"}}
+
+    def fake_post(url, params=None, headers=None, json=None, timeout=None):
+        captured.update(url=url, params=params, headers=headers, body=json)
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(fn, "get_tenant_access_token", lambda s: "t-x")
+
+    ok, err = fn.send_via_api(
+        "ou_x",
+        "**面试达标**",
+        make_settings(
+            feishu_notify_transport="api", feishu_app_id="cli_x", feishu_app_secret="sec"
+        ),
+    )
+    assert ok is True and err == ""
+    assert captured["url"].endswith("/open-apis/im/v1/messages")
+    assert captured["params"] == {"receive_id_type": "open_id"}
+    assert captured["headers"]["Authorization"] == "Bearer t-x"
+    assert captured["body"]["receive_id"] == "ou_x"
+    assert captured["body"]["msg_type"] == "interactive"
+
+    card = json.loads(captured["body"]["content"])
+    assert card["config"]["wide_screen_mode"] is True
+    element = card["elements"][0]
+    assert element["tag"] == "div"
+    assert element["text"]["tag"] == "lark_md"
+    assert "面试达标" in element["text"]["content"]
+
+
+def test_get_tenant_access_token_is_cached(monkeypatch):
+    """tenant_access_token 走进程内缓存，避免每次通知都换令牌。"""
+    import httpx
+
+    calls = {"n": 0}
+
+    class _Resp:
+        def json(self):
+            return {"code": 0, "tenant_access_token": "t-abc"}
+
+    def fake_post(*_args, **_kwargs):
+        calls["n"] += 1
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    with fn._TOKEN_LOCK:
+        fn._TOKEN_CACHE["token"] = ""
+        fn._TOKEN_CACHE["expires_at"] = 0.0
+
+    settings = make_settings(
+        feishu_notify_transport="api", feishu_app_id="cli_x", feishu_app_secret="sec"
+    )
+    assert fn.get_tenant_access_token(settings) == "t-abc"
+    assert fn.get_tenant_access_token(settings) == "t-abc"
+    assert calls["n"] == 1  # 第二次命中缓存，未再请求
+
+
+def test_api_get_error_envelope(monkeypatch):
+    monkeypatch.setattr(
+        fn, "get_tenant_access_token", lambda s: (_ for _ in ()).throw(RuntimeError("凭据错误"))
+    )
+    ok, data = fn._api_get(
+        "/open-apis/x",
+        {"a": 1},
+        make_settings(
+            feishu_notify_transport="api", feishu_app_id="cli_x", feishu_app_secret="sec"
+        ),
+    )
+    assert ok is False
+    assert "凭据错误" in data
+
+
 # ────────────────────────────── 配置派生 ──────────────────────────────
 
 

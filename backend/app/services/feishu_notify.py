@@ -7,6 +7,7 @@
 - **两种传输**（``FEISHU_NOTIFY_TRANSPORT``）：
   * ``cli``（默认）—— 复用本机已登录的 ``lark-cli``，无需把应用密钥写进 ``.env``；
   * ``api`` —— 直接调飞书 Open API（``tenant_access_token``），适合长期部署的服务端。
+  发送与部门成员解析**都**跟随该开关，因此切到 ``api`` 后不再依赖本机 lark-cli/node。
 - **幂等**：由调用方依据 ``session_reports.notified_at`` 保证同一报告只推一次；
   本模块提供 ``notify_report_qualified`` 完成「判定 -> 发送 -> 置位」的闭环。
 """
@@ -17,6 +18,8 @@ import logging
 import os
 import shutil
 import subprocess
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -28,8 +31,14 @@ logger = logging.getLogger(__name__)
 # 传输函数签名：(open_id, text, settings) -> (是否成功, 错误说明)
 Sender = Callable[[str, str, Settings], "tuple[bool, str]"]
 
-# 飞书 Open API 基址（tenant_access_token 与消息发送）
-_FEISHU_OPEN_API = "https://open.feishu.cn/open-apis"
+# 飞书 Open API 基址。注意：这里存的是域名根，
+# 各调用点统一拼「完整路径」（含 /open-apis 前缀），避免二次拼接导致 404。
+_FEISHU_API_ROOT = "https://open.feishu.cn"
+
+# tenant_access_token 进程内缓存（提前 5 分钟过期，避免临界失效）
+_TOKEN_CACHE: dict[str, Any] = {"token": "", "expires_at": 0.0}
+_TOKEN_LOCK = threading.Lock()
+_TOKEN_SAFETY_MARGIN = 300
 
 
 # ────────────────────────────── 纯函数：判定与消息构造 ──────────────────────────────
@@ -176,12 +185,12 @@ def send_via_cli(open_id: str, text: str, settings: Settings) -> tuple[bool, str
 
 # ────────────────────────────── 传输：飞书 Open API ──────────────────────────────
 
-def _get_tenant_access_token(settings: Settings) -> str:
-    """获取 tenant_access_token（自建应用）。失败抛 RuntimeError。"""
+def _fetch_tenant_access_token(settings: Settings) -> str:
+    """向飞书换取 tenant_access_token（自建应用）。失败抛 RuntimeError。"""
     import httpx
 
     resp = httpx.post(
-        f"{_FEISHU_OPEN_API}/auth/v3/tenant_access_token/internal",
+        f"{_FEISHU_API_ROOT}/open-apis/auth/v3/tenant_access_token/internal",
         json={"app_id": settings.feishu_app_id, "app_secret": settings.feishu_app_secret},
         timeout=settings.feishu_notify_timeout,
     )
@@ -189,6 +198,53 @@ def _get_tenant_access_token(settings: Settings) -> str:
     if data.get("code") != 0 or not data.get("tenant_access_token"):
         raise RuntimeError(f"获取 tenant_access_token 失败：{data.get('msg') or data}")
     return data["tenant_access_token"]
+
+
+def get_tenant_access_token(settings: Settings) -> str:
+    """带进程内缓存的 tenant_access_token（默认有效期 2h，提前 5 分钟过期）。"""
+    now = time.time()
+    with _TOKEN_LOCK:
+        cached = _TOKEN_CACHE.get("token") or ""
+        expires_at = float(_TOKEN_CACHE.get("expires_at") or 0.0)
+        if cached and now < expires_at:
+            return cached
+
+    token = _fetch_tenant_access_token(settings)
+    with _TOKEN_LOCK:
+        _TOKEN_CACHE["token"] = token
+        _TOKEN_CACHE["expires_at"] = now + 7200 - _TOKEN_SAFETY_MARGIN
+    return token
+
+
+def _api_get(path: str, params: dict, settings: Settings) -> tuple[bool, Any]:
+    """以 bot 身份直接调飞书 Open API（GET），返回 (是否成功, data 或错误说明)。"""
+    if not (settings.feishu_app_id and settings.feishu_app_secret):
+        return False, "api 传输需配置 FEISHU_APP_ID / FEISHU_APP_SECRET"
+
+    import httpx
+
+    try:
+        token = get_tenant_access_token(settings)
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+    try:
+        resp = httpx.get(
+            f"{_FEISHU_API_ROOT}{path}",
+            params=params,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=settings.feishu_notify_timeout,
+        )
+    except httpx.HTTPError as exc:
+        return False, f"请求失败：{exc}"
+
+    try:
+        payload = resp.json()
+    except ValueError:
+        return False, f"无法解析响应：{resp.text[:300]}"
+    if payload.get("code") != 0:
+        return False, f"code={payload.get('code')} msg={payload.get('msg')}"
+    return True, payload.get("data") or {}
 
 
 def send_via_api(open_id: str, text: str, settings: Settings) -> tuple[bool, str]:
@@ -199,7 +255,7 @@ def send_via_api(open_id: str, text: str, settings: Settings) -> tuple[bool, str
     import httpx
 
     try:
-        token = _get_tenant_access_token(settings)
+        token = get_tenant_access_token(settings)
     except Exception as exc:  # noqa: BLE001 - 统一降级为失败说明
         return False, str(exc)
 
@@ -211,7 +267,7 @@ def send_via_api(open_id: str, text: str, settings: Settings) -> tuple[bool, str
 
     try:
         resp = httpx.post(
-            f"{_FEISHU_OPEN_API}/im/v1/messages",
+            f"{_FEISHU_API_ROOT}/open-apis/im/v1/messages",
             params={"receive_id_type": "open_id"},
             headers={"Authorization": f"Bearer {token}"},
             json={
@@ -306,39 +362,19 @@ def _fetch_department_users(
     if page_token:
         params["page_token"] = page_token
 
-    if (settings.feishu_notify_transport or "cli").lower() != "api":
-        return _run_cli_api("/open-apis/contact/v3/users/find_by_department", params, settings)
-
-    if not (settings.feishu_app_id and settings.feishu_app_secret):
-        return False, "api 传输需配置 FEISHU_APP_ID / FEISHU_APP_SECRET"
-
-    import httpx
-
-    try:
-        token = _get_tenant_access_token(settings)
-    except Exception as exc:  # noqa: BLE001 - 统一降级为失败说明
-        return False, str(exc)
-
-    try:
-        resp = httpx.get(
-            f"{_FEISHU_OPEN_API}/contact/v3/users/find_by_department",
-            params=params,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=settings.feishu_notify_timeout,
-        )
-    except httpx.HTTPError as exc:
-        return False, f"请求失败：{exc}"
-
-    payload = resp.json()
-    if payload.get("code") == 0:
-        return True, payload.get("data") or {}
-    return False, f"code={payload.get('code')} msg={payload.get('msg')}"
+    path = "/open-apis/contact/v3/users/find_by_department"
+    if (settings.feishu_notify_transport or "cli").lower() == "api":
+        return _api_get(path, params, settings)
+    return _run_cli_api(path, params, settings)
 
 
 def resolve_department_member_ids(
     department_ids: list[str], settings: Settings
 ) -> tuple[list[str], str]:
     """按部门（open_department_id）解析成员 open_id，自动翻页。
+
+    传输方式跟随 ``FEISHU_NOTIFY_TRANSPORT``：``api`` 时直连飞书 Open API
+    （不依赖本机 lark-cli，可在服务器/容器内运行）；``cli`` 时走 lark-cli。
 
     Returns:
         (open_id 列表, 错误汇总串)。单个部门失败不阻断其它部门。

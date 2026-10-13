@@ -205,7 +205,82 @@ INFO  app.graph.nodes.final_report: 飞书 HR 通知处理结果：{'status': 's
 
 ---
 
-## 7. 代码位置
+## 7. 服务器部署（腾讯云 Docker）
+
+**结论：可以真实推送，但必须把传输切成 `api`。**
+
+### 7.1 为什么不能直接用默认的 `cli` 传输
+
+| 依赖 | 本机现状 | 服务器（Linux 容器） |
+| --- | --- | --- |
+| `lark-cli` 二进制 | 已安装 | 需额外安装 |
+| `node` 运行时 | 有（launchd PATH 里没有，代码已兜底注入） | 容器内没有 |
+| macOS keychain 里的 App Secret | CLI 自己读得到 | **没有 keychain，读不到** |
+
+第三条是硬伤：`cli` 传输靠 CLI 去 keychain 取应用密钥，Linux 容器里没有 macOS keychain，
+**部门解析和发送都会失败**。
+
+### 7.2 服务器配置清单
+
+```bash
+# .env（服务端）
+FEISHU_NOTIFY_ENABLED=true
+FEISHU_NOTIFY_TRANSPORT=api          # ← 关键：切到 Open API 直连
+FEISHU_NOTIFY_THRESHOLD=65
+FEISHU_HR_DEPARTMENT_IDS=od-3793aaeb88a6124ae8881dc829a129c0
+
+# 自建应用凭据（飞书开发者后台 → 凭证与基础信息）
+FEISHU_APP_ID=cli_aa4db80b3f7adbfb
+FEISHU_APP_SECRET=<App Secret>
+
+FEISHU_NOTIFY_TIMEOUT=10
+```
+
+代码侧已保证：切到 `api` 后，**发送与部门成员解析都走 httpx 直连**，不再依赖
+lark-cli / node / keychain；`tenant_access_token` 带进程内缓存（提前 5 分钟过期），
+一次通知只换一次令牌。
+
+### 7.3 飞书侧前置条件
+
+1. 应用 `cli_aa4db80b3f7adbfb`（笨二娘人事中台）需已开通：
+   - `im:message`（发消息）
+   - 读部门成员的 contact 权限（当前已具备）
+2. **机器人可用范围**必须覆盖收件人（否则报 `230013 Bot has NO availability to this user`）
+3. 容器需能出网访问 `open.feishu.cn:443`
+
+### 7.4 Docker 注意
+
+- `docker-compose.yml` 的 `api` 服务用 `env_file: .env` 注入，把上面的 `FEISHU_*` 写进项目根
+  `.env` 即可（该文件已被 git 忽略，不会进仓库）。
+- `web` / 前端服务不需要这些变量。
+- 容器启动时会执行 `alembic upgrade head`，`notified_at` 列会自动建好。
+
+### 7.5 部署后自检
+
+```bash
+docker compose exec api python scripts/send_feishu_test.py --dry-run
+docker compose exec api python scripts/send_feishu_test.py
+```
+
+### 7.6 已验证 / 未验证
+
+- **已验证**：
+  - 阈值判定、幂等（`notified_at`）、文案构造；
+  - 按部门解析（含翻页、在职过滤、多部门、与显式 open_id 合并去重）；
+  - `api` 传输的完整 HTTP 契约——换令牌、查部门成员、发消息的请求构造，
+    用本地 mock 飞书服务逐项核对（含 `tenant_access_token` 只换一次、Bearer 头、
+    `msg_type=interactive` 的 Markdown 卡片结构）；
+  - `cli` 传输已对真实飞书发通（方玺、赵江荷均收到）。
+- **未验证**：`api` 传输用**真实 App Secret** 打真实飞书——密钥存在 macOS keychain 里、
+  ACL 不允许外部读取。部署时填好 `FEISHU_APP_SECRET` 后跑一次
+  `scripts/send_feishu_test.py` 即可确认。
+
+> 消息形态：`cli` 传输用 lark-cli 的 `--markdown`，`api` 传输用 `msg_type=interactive`
+> 的 Markdown 卡片，两者观感一致。
+
+---
+
+## 8. 代码位置
 
 | 文件 | 作用 |
 | --- | --- |
