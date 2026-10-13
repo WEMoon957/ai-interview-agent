@@ -192,7 +192,7 @@ def _get_tenant_access_token(settings: Settings) -> str:
 
 
 def send_via_api(open_id: str, text: str, settings: Settings) -> tuple[bool, str]:
-    """通过飞书 Open API 以 bot 身份向 HR 发送文本消息。"""
+    """通过飞书 Open API 以 bot 身份向 HR 发送 Markdown 卡片消息。"""
     if not (settings.feishu_app_id and settings.feishu_app_secret):
         return False, "api 传输需配置 FEISHU_APP_ID / FEISHU_APP_SECRET"
 
@@ -203,6 +203,12 @@ def send_via_api(open_id: str, text: str, settings: Settings) -> tuple[bool, str
     except Exception as exc:  # noqa: BLE001 - 统一降级为失败说明
         return False, str(exc)
 
+    # 用交互卡片承载 Markdown，与 lark-cli 的 --markdown 观感保持一致
+    card = {
+        "config": {"wide_screen_mode": True},
+        "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": text}}],
+    }
+
     try:
         resp = httpx.post(
             f"{_FEISHU_OPEN_API}/im/v1/messages",
@@ -210,8 +216,8 @@ def send_via_api(open_id: str, text: str, settings: Settings) -> tuple[bool, str
             headers={"Authorization": f"Bearer {token}"},
             json={
                 "receive_id": open_id,
-                "msg_type": "text",
-                "content": json.dumps({"text": text}, ensure_ascii=False),
+                "msg_type": "interactive",
+                "content": json.dumps(card, ensure_ascii=False),
             },
             timeout=settings.feishu_notify_timeout,
         )
@@ -281,6 +287,54 @@ def is_active_member(item: dict) -> bool:
     return status.get("is_activated", True) is not False
 
 
+def _fetch_department_users(
+    department_id: str, page_token: str, settings: Settings
+) -> tuple[bool, Any]:
+    """拉取某部门的成员分页。
+
+    - ``api`` 传输：直接调飞书 Open API（**服务端部署推荐**，不依赖本机 lark-cli）；
+    - ``cli`` 传输：复用 lark-cli 的 api 逃生口（本机 macOS 场景）。
+
+    Returns:
+        (是否成功, 成功时返回 data 对象 / 失败时返回错误说明)。
+    """
+    params = {
+        "department_id": department_id,
+        "department_id_type": "open_department_id",
+        "page_size": 50,
+    }
+    if page_token:
+        params["page_token"] = page_token
+
+    if (settings.feishu_notify_transport or "cli").lower() != "api":
+        return _run_cli_api("/open-apis/contact/v3/users/find_by_department", params, settings)
+
+    if not (settings.feishu_app_id and settings.feishu_app_secret):
+        return False, "api 传输需配置 FEISHU_APP_ID / FEISHU_APP_SECRET"
+
+    import httpx
+
+    try:
+        token = _get_tenant_access_token(settings)
+    except Exception as exc:  # noqa: BLE001 - 统一降级为失败说明
+        return False, str(exc)
+
+    try:
+        resp = httpx.get(
+            f"{_FEISHU_OPEN_API}/contact/v3/users/find_by_department",
+            params=params,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=settings.feishu_notify_timeout,
+        )
+    except httpx.HTTPError as exc:
+        return False, f"请求失败：{exc}"
+
+    payload = resp.json()
+    if payload.get("code") == 0:
+        return True, payload.get("data") or {}
+    return False, f"code={payload.get('code')} msg={payload.get('msg')}"
+
+
 def resolve_department_member_ids(
     department_ids: list[str], settings: Settings
 ) -> tuple[list[str], str]:
@@ -295,15 +349,7 @@ def resolve_department_member_ids(
     for dep_id in department_ids:
         page_token = ""
         while True:
-            params = {
-                "department_id": dep_id,
-                "department_id_type": "open_department_id",
-                "page_size": 50,
-            }
-            if page_token:
-                params["page_token"] = page_token
-
-            ok, data = _run_cli_api("/open-apis/contact/v3/users/find_by_department", params, settings)
+            ok, data = _fetch_department_users(dep_id, page_token, settings)
             if not ok:
                 errors.append(f"部门 {dep_id} 解析失败：{data}")
                 break
