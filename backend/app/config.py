@@ -41,11 +41,40 @@ class Settings(BaseSettings):
     # MVP 兜底：置 True 时启动自动建表（默认走 Alembic）
     auto_create_tables: bool = False
 
+    # ── 招聘汇总权重（各阶段对最终分的贡献，缺失环节会自动重新归一化） ──
+    summary_weight_screening: float = 0.20  # 简历初筛
+    summary_weight_ai: float = 0.40  # AI 面试
+    summary_weight_offline: float = 0.40  # 线下复试
+
+    # ── 对外链接 ─────────────────────────────────────────────────
+    # 候选人面试页的对外基址（卡片/待办里的绝对链接由它拼出，如 http://host:3000/i/{token}）。
+    # 部署到服务器或走内网穿透时，改成 HR/候选人实际能访问的地址。
+    public_base_url: str = "http://localhost:3000"
+
     # ── 飞书 HR 通知（面试达标自动推送） ─────────────────────────
     # 总开关：False 时 final_report 不触发任何外部推送
     feishu_notify_enabled: bool = False
     # 触发阈值：综合分 >= 该值即推送（默认 65，与系统「推荐」档对齐）
     feishu_notify_threshold: float = 65.0
+    # 分环节开关：简历初筛完成推送推荐名单 / 招聘汇总完成提醒 HR 复核与办理 offer
+    feishu_screening_notify_enabled: bool = True
+    # 初筛推送门槛：初筛分 >= 该值才进入「推荐 AI 面试」名单
+    feishu_screening_min_score: float = 65.0
+    # 初筛通过（达到门槛）即自动生成 AI 面试链接，供推送卡片/待办直接带上
+    feishu_screening_auto_invite: bool = True
+    # 推送时顺带为 HR 创建飞书待办（任务），确保「提醒」落到待办列表而不是刷过去
+    feishu_task_enabled: bool = True
+    # 待办负责人 open_id（ou_ 开头），多个用英文逗号分隔；
+    # 留空 = 每个飞书收件人各建一条待办
+    feishu_task_assignee_open_ids: str = ""
+    # 待办创建身份（仅 cli 传输生效）：bot=应用身份（服务器部署推荐，需应用申请 task:task:write）
+    #                               user=本机登录用户身份（联调便捷，需给 lark-cli 补授权该 scope）
+    feishu_task_identity: str = "bot"
+    # 待办截止时间（天数，相对今天）
+    feishu_task_due_days: int = 2
+    feishu_summary_notify_enabled: bool = True
+    # 单张卡片最多列出的候选人条数（超出只显示汇总数字，避免卡片过长）
+    feishu_notify_max_items: int = 20
     # 传输方式：cli（复用本机已登录的 lark-cli，默认）| api（飞书 Open API 直连）
     feishu_notify_transport: str = "cli"
     # HR 收件人 open_id（ou_ 开头），多个用英文逗号分隔
@@ -97,6 +126,20 @@ class Settings(BaseSettings):
             for item in (self.feishu_hr_department_ids or "").split(",")
             if item.strip()
         ]
+
+    @property
+    def task_assignee_list(self) -> list[str]:
+        """待办负责人 open_id 列表；为空时由调用方回退为「所有收件人」。"""
+        return [
+            item.strip()
+            for item in (self.feishu_task_assignee_open_ids or "").split(",")
+            if item.strip()
+        ]
+
+    @property
+    def public_base_url_normalized(self) -> str:
+        """对外基址（去掉尾部斜杠，便于直接拼 /i/{token}）。"""
+        return (self.public_base_url or "").rstrip("/")
 
     @property
     def feishu_notify_ready(self) -> bool:

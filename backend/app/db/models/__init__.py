@@ -2,9 +2,12 @@
 from app.db.models.candidate import Candidate
 from app.db.models.evaluation import AnswerEvaluation
 from app.db.models.job import JobPosting
+from app.db.models.offline import OfflineInterview
 from app.db.models.report import SessionReport
 from app.db.models.resume import Resume
+from app.db.models.screening import ResumeScreening
 from app.db.models.session import InterviewSession
+from app.db.models.summary import RecruitmentSummary
 from app.db.models.template import InterviewTemplate
 
 __all__ = [
@@ -15,4 +18,8 @@ __all__ = [
     "InterviewSession",
     "AnswerEvaluation",
     "SessionReport",
+    # 招聘全链路（本轮新增）
+    "ResumeScreening",
+    "OfflineInterview",
+    "RecruitmentSummary",
 ]

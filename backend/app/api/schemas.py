@@ -23,6 +23,17 @@ class JobCreate(BaseModel):
     title: str = Field(min_length=1, description="岗位名称")
     jd_text: str = Field(default="", description="岗位 JD 描述")
     requirements: dict = Field(default_factory=dict, description="岗位要求（JSON 对象）")
+    # 免简历初筛：True 时上传简历直接生成 AI 面试链接
+    skip_screening: bool = Field(default=False, description="是否免简历初筛（直接发 AI 面试）")
+
+
+class JobUpdate(BaseModel):
+    """更新岗位请求体（字段均可选，仅更新传入项）。"""
+
+    title: str | None = Field(default=None, description="岗位名称")
+    jd_text: str | None = Field(default=None, description="岗位 JD 描述")
+    requirements: dict | None = Field(default=None, description="岗位要求（JSON 对象）")
+    skip_screening: bool | None = Field(default=None, description="是否免简历初筛")
 
 
 class TemplateCreate(BaseModel):
@@ -138,3 +149,58 @@ class SessionReportOut(BaseModel):
     status: str
     report: ReportOut | None
     evaluations: list[EvaluationOut]
+
+
+# ── 招聘全链路：初筛 / 线下复试 / 汇总 ─────────────────────
+
+
+class ScreeningInvite(BaseModel):
+    """发起 AI 面试请求体（单个或批量）。"""
+
+    screening_ids: list[str] = Field(min_length=1, description="简历初筛记录 id 列表")
+    template_id: str | None = Field(default=None, description="指定面试模板；留空则取该岗位最新模板")
+
+
+class ScreeningNotify(BaseModel):
+    """手动推送初筛推荐名单给 HR。"""
+
+    job_id: str = Field(description="岗位 id")
+    min_score: float | None = Field(default=None, description="推荐门槛；留空用服务端默认（65）")
+
+
+class OfflineInterviewCreate(BaseModel):
+    """创建线下复试安排。"""
+
+    screening_id: str | None = Field(default=None, description="来源初筛记录 id（可自动带出候选人/岗位）")
+    session_id: str | None = Field(default=None, description="来源 AI 面试会话 id")
+    candidate_id: str | None = Field(default=None, description="候选人 id（与 screening/session 二选一）")
+    job_id: str | None = Field(default=None, description="岗位 id")
+    scheduled_at: str | None = Field(default=None, description="线下面时间（ISO8601）")
+    location: str = Field(default="", description="面试地点/门店")
+    interviewer: str = Field(default="", description="面试官姓名")
+    interviewer_role: str = Field(default="", description="面试官角色：hr / store_manager")
+
+
+class OfflineInterviewUpdate(BaseModel):
+    """更新线下复试安排（改期 / 改状态）。"""
+
+    scheduled_at: str | None = None
+    location: str | None = None
+    interviewer: str | None = None
+    interviewer_role: str | None = None
+    status: str | None = Field(default=None, description="scheduled / done / no_show / cancelled")
+
+
+class OfflineScoreSubmit(BaseModel):
+    """线下复试人工打分。"""
+
+    score: float = Field(ge=0, le=100, description="线下复试总分（百分制）")
+    dim_scores: list[dict] = Field(default_factory=list, description="维度得分明细")
+    comment: str = Field(default="", description="面试评语")
+    decision: str = Field(default="", description="录用结论：pass / hold / reject")
+
+
+class SummaryRebuild(BaseModel):
+    """生成汇总快照请求体。"""
+
+    job_id: str = Field(description="岗位 id；留空岗位可先查询再指定")

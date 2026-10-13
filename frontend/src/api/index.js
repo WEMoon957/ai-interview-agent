@@ -5,6 +5,8 @@ export const listJobs = () => request.get('/admin/jobs')
 
 export const createJob = (data) => request.post('/admin/jobs', data)
 
+export const updateJob = (jobId, data) => request.put(`/admin/jobs/${jobId}`, data)
+
 export const deleteJob = (jobId) => request.delete(`/admin/jobs/${jobId}`)
 
 export const listTemplates = () => request.get('/admin/templates')
@@ -35,3 +37,47 @@ export const submitAnswer = (token, answer) =>
 // ── 评分查询（供外部系统）──────────────────────────
 export const getScoreByCandidate = (candidateId) =>
   request.get(`/api/scores/candidate/${candidateId}`)
+
+// ── 简历初筛（岗位文件夹上传 → AI 打分排序 → 发面试）────
+export const uploadResumes = (formData) =>
+  request.post('/admin/screenings/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+
+export const listScreenings = (params) => request.get('/admin/screenings', { params })
+
+export const getScreening = (screeningId) => request.get(`/admin/screenings/${screeningId}`)
+
+export const inviteScreenings = (data) => request.post('/admin/screenings/invite', data)
+
+// 手动把「推荐进入 AI 面试」名单推送 HR 飞书
+export const notifyScreenings = (data) => request.post('/admin/screenings/notify', data)
+
+export const deleteScreening = (screeningId) =>
+  request.delete(`/admin/screenings/${screeningId}`)
+
+// ── 线下复试（HR/店长约面 + 打分）────────────────────
+export const createOfflineInterview = (data) => request.post('/admin/offline-interviews', data)
+
+export const listOfflineInterviews = (params) =>
+  request.get('/admin/offline-interviews', { params })
+
+export const updateOfflineInterview = (id, data) =>
+  request.put(`/admin/offline-interviews/${id}`, data)
+
+export const scoreOfflineInterview = (id, data) =>
+  request.post(`/admin/offline-interviews/${id}/score`, data)
+
+export const deleteOfflineInterview = (id) =>
+  request.delete(`/admin/offline-interviews/${id}`)
+
+// ── 招聘汇总（全链路聚合 + 落库）────────────────────
+export const getSummary = (params) => request.get('/admin/summary', { params })
+
+export const rebuildSummary = (params) => request.post('/admin/summary/rebuild', null, { params })
+
+// 手动把已完成的汇总结果推送 HR 飞书（补推，忽略幂等）
+export const notifySummary = (params) => request.post('/admin/summary/notify', null, { params })
+
+export const listSummarySnapshots = (params) =>
+  request.get('/admin/summary/snapshots', { params })

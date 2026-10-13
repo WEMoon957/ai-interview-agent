@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import admin, interview, scores
+from app.api import admin, interview, offline, scores, screening, summary
 from app.config import get_settings
 from app.exceptions import register_exception_handlers
 
@@ -44,6 +44,10 @@ register_exception_handlers(app)
 app.include_router(admin.router)
 app.include_router(interview.router)
 app.include_router(scores.router)
+# 招聘全链路：简历初筛 / 线下复试 / 汇总落库
+app.include_router(screening.router)
+app.include_router(offline.router)
+app.include_router(summary.router)
 
 
 @app.get("/health", tags=["health"])

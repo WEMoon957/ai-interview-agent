@@ -15,13 +15,25 @@
           <el-icon><Document /></el-icon>
           <span>面试模板</span>
         </el-menu-item>
+        <el-menu-item index="/console/screening">
+          <el-icon><Files /></el-icon>
+          <span>简历初筛</span>
+        </el-menu-item>
         <el-menu-item index="/console/sessions">
           <el-icon><User /></el-icon>
           <span>面试会话</span>
         </el-menu-item>
+        <el-menu-item index="/console/offline">
+          <el-icon><OfficeBuilding /></el-icon>
+          <span>线下复试</span>
+        </el-menu-item>
         <el-menu-item index="/console/reports">
           <el-icon><DataAnalysis /></el-icon>
           <span>评分报告</span>
+        </el-menu-item>
+        <el-menu-item index="/console/summary">
+          <el-icon><PieChart /></el-icon>
+          <span>数据汇总</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -40,7 +52,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Odometer, Briefcase, Document, User, DataAnalysis } from '@element-plus/icons-vue'
+import { Odometer, Briefcase, Document, Files, User, OfficeBuilding, DataAnalysis, PieChart } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const activeMenu = computed(() => route.path)

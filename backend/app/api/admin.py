@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, ok
-from app.api.schemas import JobCreate, TemplateCreate
+from app.api.schemas import JobCreate, JobUpdate, TemplateCreate
 from app.db.models import (
     AnswerEvaluation,
     Candidate,
@@ -16,6 +16,7 @@ from app.db.models import (
     SessionReport,
 )
 from app.exceptions import BizError
+from app.services.cascade import purge_candidate, purge_job, purge_template
 from app.services.resume_parser import parse_resume
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -30,18 +31,27 @@ def _parse_uuid(value: str, label: str) -> uuid.UUID:
 
 
 def _delete_session_cascade(db: Session, session_id: uuid.UUID) -> None:
-    """级联删除一个面试会话及其关联数据（评分/报告/简历/候选人）。"""
-    # 删评分、报告
-    db.query(AnswerEvaluation).filter(AnswerEvaluation.session_id == session_id).delete(synchronize_session=False)
-    db.query(SessionReport).filter(SessionReport.session_id == session_id).delete(synchronize_session=False)
-    # 拿 candidate_id 删会话
+    """级联删除一个面试会话及其关联数据。
+
+    走 ``purge_candidate`` 统一口径：删除该候选人的会话/评分/报告/简历，
+    以及招聘全链路的初筛记录、线下复试与汇总快照（否则会撞外键约束）。
+    """
     session = db.get(InterviewSession, session_id)
     candidate_id = session.candidate_id if session else None
-    db.query(InterviewSession).filter(InterviewSession.id == session_id).delete(synchronize_session=False)
-    # 删简历、候选人
     if candidate_id:
-        db.query(Resume).filter(Resume.candidate_id == candidate_id).delete(synchronize_session=False)
-        db.query(Candidate).filter(Candidate.id == candidate_id).delete(synchronize_session=False)
+        purge_candidate(db, candidate_id)
+        return
+
+    # 异常数据兜底：会话没有候选人时，只删该会话自身相关数据
+    db.query(AnswerEvaluation).filter(AnswerEvaluation.session_id == session_id).delete(
+        synchronize_session=False
+    )
+    db.query(SessionReport).filter(SessionReport.session_id == session_id).delete(
+        synchronize_session=False
+    )
+    db.query(InterviewSession).filter(InterviewSession.id == session_id).delete(
+        synchronize_session=False
+    )
 
 
 @router.get("/jobs")
@@ -55,6 +65,7 @@ def list_jobs(db: Session = Depends(get_db)):
                 "title": j.title,
                 "jd_text": j.jd_text,
                 "requirements": j.requirements,
+                "skip_screening": j.skip_screening,
                 "created_at": j.created_at.isoformat() if j.created_at else None,
             }
             for j in jobs
@@ -72,6 +83,7 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db)):
         title=payload.title.strip(),
         jd_text=payload.jd_text or "",
         requirements=payload.requirements or {},
+        skip_screening=bool(payload.skip_screening),
     )
     db.add(job)
     db.commit()
@@ -83,6 +95,39 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db)):
             "title": job.title,
             "jd_text": job.jd_text,
             "requirements": job.requirements,
+            "skip_screening": job.skip_screening,
+        }
+    )
+
+
+@router.put("/jobs/{job_id}")
+def update_job(job_id: str, payload: JobUpdate, db: Session = Depends(get_db)):
+    """更新岗位（如切换「免初筛」开关）。仅更新传入字段。"""
+    jid = _parse_uuid(job_id, "job_id")
+    job = db.get(JobPosting, jid)
+    if job is None:
+        raise BizError(404, "岗位不存在", http_status=404)
+
+    if payload.title is not None:
+        if not payload.title.strip():
+            raise BizError(422, "岗位名称不能为空", http_status=422)
+        job.title = payload.title.strip()
+    if payload.jd_text is not None:
+        job.jd_text = payload.jd_text
+    if payload.requirements is not None:
+        job.requirements = payload.requirements
+    if payload.skip_screening is not None:
+        job.skip_screening = bool(payload.skip_screening)
+
+    db.commit()
+    db.refresh(job)
+    return ok(
+        {
+            "id": str(job.id),
+            "title": job.title,
+            "jd_text": job.jd_text,
+            "requirements": job.requirements,
+            "skip_screening": job.skip_screening,
         }
     )
 
@@ -286,40 +331,26 @@ def get_report(session_id: uuid.UUID, db: Session = Depends(get_db)):
 
 @router.delete("/jobs/{job_id}")
 def delete_job(job_id: str, db: Session = Depends(get_db)):
-    """删除岗位（级联删除关联的模板、会话、评分、报告、候选人、简历）。"""
+    """删除岗位（级联删除模板、会话、评分、报告、候选人、简历、初筛、线下复试、汇总）。"""
     jid = _parse_uuid(job_id, "job_id")
     job = db.get(JobPosting, jid)
     if job is None:
         raise BizError(404, "岗位不存在", http_status=404)
 
-    # 级联：先删该岗位下所有模板（含模板的会话），再删岗位
-    templates = db.query(InterviewTemplate).filter(InterviewTemplate.job_id == jid).all()
-    for tpl in templates:
-        # 删该模板下所有会话（级联）
-        sessions = db.query(InterviewSession).filter(InterviewSession.template_id == tpl.id).all()
-        for sess in sessions:
-            _delete_session_cascade(db, sess.id)
-        db.delete(tpl)
-
-    db.delete(job)
+    purge_job(db, jid)
     db.commit()
     return ok({"deleted": True, "job_id": str(jid)})
 
 
 @router.delete("/templates/{template_id}")
 def delete_template(template_id: str, db: Session = Depends(get_db)):
-    """删除面试模板（级联删除关联的会话、评分、报告、候选人、简历）。"""
+    """删除面试模板（级联删除关联的会话、评分、报告、候选人、简历、初筛、线下复试、汇总）。"""
     tid = _parse_uuid(template_id, "template_id")
     template = db.get(InterviewTemplate, tid)
     if template is None:
         raise BizError(404, "模板不存在", http_status=404)
 
-    # 级联：先删该模板下所有会话，再删模板
-    sessions = db.query(InterviewSession).filter(InterviewSession.template_id == tid).all()
-    for sess in sessions:
-        _delete_session_cascade(db, sess.id)
-
-    db.delete(template)
+    purge_template(db, tid)
     db.commit()
     return ok({"deleted": True, "template_id": str(tid)})
 

@@ -10,8 +10,8 @@
 
       <el-table :data="jobs" v-loading="loading" stripe>
         <el-table-column prop="title" label="岗位名称" min-width="160" />
-        <el-table-column prop="jd_text" label="JD 描述" min-width="300" show-overflow-tooltip />
-        <el-table-column label="技能要求" min-width="200">
+        <el-table-column prop="jd_text" label="JD 描述" min-width="260" show-overflow-tooltip />
+        <el-table-column label="技能要求" min-width="180">
           <template #default="{ row }">
             <el-tag
               v-for="skill in (row.requirements?.skills || [])"
@@ -21,6 +21,18 @@
             >
               {{ skill }}
             </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="招聘流程" width="150">
+          <template #default="{ row }">
+            <el-switch
+              :model-value="row.skip_screening"
+              active-text="免初筛"
+              inactive-text="需初筛"
+              inline-prompt
+              style="--el-switch-on-color: #f59e0b"
+              @change="(val) => toggleSkipScreening(row, val)"
+            />
           </template>
         </el-table-column>
         <el-table-column label="创建时间" width="160">
@@ -34,6 +46,14 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-top: 12px"
+        title="「免初筛」岗位：在『简历初筛』页上传简历文件夹后，不做 AI 打分，直接为每位候选人生成 AI 面试链接。"
+      />
     </el-card>
 
     <!-- 新建岗位弹窗 -->
@@ -61,6 +81,12 @@
             style="width: 100%"
           />
         </el-form-item>
+        <el-form-item label="招聘流程">
+          <el-switch v-model="form.skip_screening" />
+          <span class="switch-tip">
+            {{ form.skip_screening ? '免初筛：上传简历后直接发 AI 面试链接' : '需初筛：先 AI 简历打分排序，再决定是否发面试' }}
+          </span>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -73,13 +99,13 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listJobs, createJob, deleteJob } from '../../api'
+import { listJobs, createJob, updateJob, deleteJob } from '../../api'
 
 const jobs = ref([])
 const loading = ref(false)
 const dialogVisible = ref(false)
 const saving = ref(false)
-const form = ref({ title: '', jd_text: '', skills: [] })
+const form = ref({ title: '', jd_text: '', skills: [], skip_screening: false })
 
 async function load() {
   loading.value = true
@@ -91,7 +117,7 @@ async function load() {
 }
 
 function openCreate() {
-  form.value = { title: '', jd_text: '', skills: [] }
+  form.value = { title: '', jd_text: '', skills: [], skip_screening: false }
   dialogVisible.value = true
 }
 
@@ -106,12 +132,35 @@ async function handleSave() {
       title: form.value.title.trim(),
       jd_text: form.value.jd_text,
       requirements: { skills: form.value.skills },
+      skip_screening: form.value.skip_screening,
     })
     ElMessage.success('岗位创建成功')
     dialogVisible.value = false
     load()
   } finally {
     saving.value = false
+  }
+}
+
+async function toggleSkipScreening(row, val) {
+  // 开启免初筛会改变整个招聘流程（上传即发面试链接），需二次确认，避免误触
+  if (val) {
+    try {
+      await ElMessageBox.confirm(
+        `将「${row.title}」设为免初筛后，上传简历将跳过 AI 初筛打分、直接生成 AI 面试链接。确定吗？`,
+        '切换为免初筛',
+        { confirmButtonText: '确定切换', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return // 取消：开关保持原值（受控组件会自动回弹）
+    }
+  }
+  try {
+    await updateJob(row.id, { skip_screening: val })
+    row.skip_screening = val
+    ElMessage.success(val ? '已设为免初筛：上传简历即发面试链接' : '已设为需初筛')
+  } catch {
+    // 失败时保持原值（响应拦截已提示）
   }
 }
 
@@ -147,5 +196,10 @@ onMounted(load)
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+.switch-tip {
+  margin-left: 10px;
+  color: #909399;
+  font-size: 13px;
 }
 </style>
