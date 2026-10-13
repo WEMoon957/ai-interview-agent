@@ -29,13 +29,16 @@ services:
     environment:
       # 容器内通过服务名访问 postgres，覆盖 .env 中的 localhost
       DATABASE_URL: postgresql://interview:interview@postgres:5432/interview
+      # 国内 pip 镜像加速（腾讯云镜像），避免容器启动时装依赖超时导致 502
+      PIP_INDEX_URL: "https://mirrors.cloud.tencent.com/pypi/simple/"
+      PIP_TRUSTED_HOST: "mirrors.cloud.tencent.com"
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
     command: >
-      sh -c "pip install -r requirements.txt &&
+      sh -c "pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple &&
              alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
