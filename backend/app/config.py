@@ -41,6 +41,26 @@ class Settings(BaseSettings):
     # MVP 兜底：置 True 时启动自动建表（默认走 Alembic）
     auto_create_tables: bool = False
 
+    # ── 飞书 HR 通知（面试达标自动推送） ─────────────────────────
+    # 总开关：False 时 final_report 不触发任何外部推送
+    feishu_notify_enabled: bool = False
+    # 触发阈值：综合分 >= 该值即推送（默认 65，与系统「推荐」档对齐）
+    feishu_notify_threshold: float = 65.0
+    # 传输方式：cli（复用本机已登录的 lark-cli，默认）| api（飞书 Open API 直连）
+    feishu_notify_transport: str = "cli"
+    # HR 收件人 open_id（ou_ 开头），多个用英文逗号分隔
+    feishu_hr_open_ids: str = ""
+    # HR 收件部门（open_department_id，od- 开头），多个用英文逗号分隔；
+    # 推送时按部门实时解析成员 open_id（自动纳入新入职成员，过滤离职/冻结）
+    feishu_hr_department_ids: str = ""
+    # cli 传输：lark-cli 可执行文件路径（留空则自动探测 PATH 与受管安装目录）
+    feishu_lark_cli_path: str = ""
+    # api 传输：自建应用凭据（transport=api 时必填）
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    # 单次发送超时（秒）
+    feishu_notify_timeout: float = 10.0
+
     @property
     def sqlalchemy_url(self) -> str:
         """返回 SQLAlchemy 可用的数据库 URL（强制使用 psycopg v3 驱动）。"""
@@ -63,6 +83,31 @@ class Settings(BaseSettings):
             if url.startswith(prefix):
                 return url.replace(prefix, "postgresql://", 1)
         return url
+
+    @property
+    def hr_open_id_list(self) -> list[str]:
+        """HR 收件人 open_id 列表（解析逗号分隔串，忽略空白项）。"""
+        return [item.strip() for item in (self.feishu_hr_open_ids or "").split(",") if item.strip()]
+
+    @property
+    def hr_department_id_list(self) -> list[str]:
+        """HR 收件部门 open_department_id 列表（解析逗号分隔串，忽略空白项）。"""
+        return [
+            item.strip()
+            for item in (self.feishu_hr_department_ids or "").split(",")
+            if item.strip()
+        ]
+
+    @property
+    def feishu_notify_ready(self) -> bool:
+        """通知是否具备发送条件：已启用 + 有收件人（人或部门）+ 传输凭据齐备。"""
+        if not self.feishu_notify_enabled:
+            return False
+        if not self.hr_open_id_list and not self.hr_department_id_list:
+            return False
+        if (self.feishu_notify_transport or "cli").lower() == "api":
+            return bool(self.feishu_app_id and self.feishu_app_secret)
+        return True
 
 
 @lru_cache

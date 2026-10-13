@@ -1,7 +1,8 @@
 """面试报告表模型。"""
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Float, ForeignKey, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -25,5 +26,7 @@ class SessionReport(TimestampMixin, Base):
     total_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     verdict: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 达标推送至 HR 的时间；NULL 表示尚未推送（幂等标记，避免重跑重复推送）
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     session = relationship("InterviewSession", lazy="selectin")

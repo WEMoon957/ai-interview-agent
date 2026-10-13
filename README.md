@@ -281,11 +281,13 @@ interview-agent/
 │   │   ├── models/                 # Pydantic schemas（AnswerScore、Report 等）
 │   │   ├── services/
 │   │   │   ├── resume_parser.py    # PDF/DOCX 解析
-│   │   │   └── scoring.py          # 维度加权汇总
+│   │   │   ├── scoring.py          # 维度加权汇总
+│   │   │   └── feishu_notify.py    # 面试达标 -> 推送 HR 飞书（cli / Open API 双传输）
 │   │   ├── api/                    # admin / interview 路由
 │   │   └── db/                     # SQLAlchemy models + migrations
 │   ├── scripts/
-│   │   └── checkpointer_concurrency.py   # checkpointer 并发压测 + 连接中断自愈探针
+│   │   ├── checkpointer_concurrency.py   # checkpointer 并发压测 + 连接中断自愈探针
+│   │   └── send_feishu_test.py           # 飞书 HR 通知通道自检
 │   ├── tests/                      # pytest 回归用例（基于 mock/fake LLM，不依赖外部服务）
 │   ├── requirements.txt
 │   └── Dockerfile
@@ -387,3 +389,39 @@ python scripts/checkpointer_concurrency.py --impl current --mode both --threads 
 - **多语言**：候选语言自适应（中文/英文面试）
 - **批量背调对比**：同岗位 N 个候选人横向排行榜与维度对比
 - **合规**：面试数据留存提醒、候选人知情同意书、AI 面试结果仅作参考的免责声明
+
+## 11. 飞书 HR 通知（面试达标自动推送）
+
+面试收尾（`final_report` 落库报告）后，若**综合分 ≥ 阈值**，自动把候选人结果推送到 HR 飞书，
+便于 HR 直接推进下一轮面试。
+
+- **触发口径**：`session_reports.total_score >= FEISHU_NOTIFY_THRESHOLD`（默认 65，与「推荐」档一致）
+- **幂等**：报告行新增 `notified_at`（迁移 `0003_report_notified`），已推送则跳过，重跑不重复刷屏
+- **尽力而为**：推送异常只记日志，绝不影响面试收尾与接口返回
+- **双传输**：`cli`（默认，复用本机已登录的 `lark-cli`，无需密钥）/ `api`（飞书 Open API 直连）
+
+配置（见 `.env.example`）：
+
+```bash
+FEISHU_NOTIFY_ENABLED=true            # 总开关
+FEISHU_NOTIFY_THRESHOLD=65            # 触发阈值
+FEISHU_NOTIFY_TRANSPORT=cli           # cli | api
+FEISHU_HR_OPEN_IDS=ou_xxx,ou_yyy      # HR 收件人（逗号分隔）
+FEISHU_HR_DEPARTMENT_IDS=od_xxx       # HR 收件部门（od_ 开头，按部门实时解析在职成员）
+# FEISHU_LARK_CLI_PATH=               # 留空自动探测（launchd 下亦可兜底定位）
+# FEISHU_APP_ID / FEISHU_APP_SECRET   # transport=api 时必填
+```
+
+> **按部门收件**：配置 `FEISHU_HR_DEPARTMENT_IDS` 后，每次推送会实时解析该部门的在职成员逐一私聊——
+> 部门进新人自动纳入、离职自动过滤，不用改配置。多个部门用逗号分隔，可与 `FEISHU_HR_OPEN_IDS` 并用。
+
+通道自检（不经过面试流程，直接验证 HR 收件人与登录态）：
+
+```bash
+cd backend
+.venv/bin/python scripts/send_feishu_test.py --dry-run      # 只看文案与配置
+.venv/bin/python scripts/send_feishu_test.py                # 真发一条样例通知
+```
+
+> 详细接入与排障（如何取 HR open_id、230013 机器人可用范围、launchd PATH/keychain 坑）见
+> [`docs/飞书HR通知接入说明.md`](docs/飞书HR通知接入说明.md)。
