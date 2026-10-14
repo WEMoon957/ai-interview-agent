@@ -96,12 +96,15 @@ class InterviewContext(BaseModel):
     """候选人面试上下文。
 
     status 为 consent_required 时表示尚未同意协议（此时 question / opening 为空）。
+    question_type 取值 subjective / choice；choice 时 options 为候选选项。
     """
 
     session_id: str
     opening: str
     question: str
     question_id: str
+    question_type: str = "subjective"
+    options: list[str] = Field(default_factory=list)
     progress: Progress
     status: str
     consent: ConsentInfo | None = None
@@ -119,6 +122,8 @@ class AnswerResponse(BaseModel):
     status: str  # follow_up / next_question / finished
     question: str
     question_id: str
+    question_type: str = "subjective"
+    options: list[str] = Field(default_factory=list)
     progress: Progress
     message: str
 

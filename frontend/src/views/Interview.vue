@@ -93,17 +93,46 @@
 
         <!-- 答题区 -->
         <div class="answer-area">
+          <!-- 选择题：单选选项 -->
+          <div v-if="questionType === 'choice'" class="choice-list">
+            <label
+              v-for="(opt, i) in options"
+              :key="i"
+              class="choice-item"
+              :class="{ active: selectedOption === opt }"
+              @click="selectedOption = opt"
+            >
+              <input
+                type="radio"
+                name="choice"
+                :value="opt"
+                v-model="selectedOption"
+                class="choice-radio"
+              />
+              <span class="choice-label">{{ optionLabel(i) }}</span>
+              <span class="choice-text">{{ opt }}</span>
+            </label>
+          </div>
+
+          <!-- 主观题：文本框 -->
           <textarea
+            v-else
             v-model="answer"
             class="answer-input"
             placeholder="请输入你的回答，尽量结合真实经历具体作答…"
             maxlength="4000"
           ></textarea>
+
           <div class="answer-meta">
-            <span class="char-count">{{ answer.length }} / 4000</span>
+            <span class="char-count" v-if="questionType !== 'choice'">
+              {{ answer.length }} / 4000
+            </span>
+            <span class="char-count" v-else>
+              {{ selectedOption ? '已选择' : '请选择一个选项' }}
+            </span>
             <button
               class="submit-btn"
-              :disabled="!answer.trim() || submitting"
+              :disabled="!canSubmit || submitting"
               @click="handleSubmit"
             >
               {{ submitting ? '提交中…' : '提交回答' }}
@@ -137,6 +166,9 @@ const loading = ref(true)
 const opening = ref('')
 const question = ref('')
 const questionId = ref('')
+const questionType = ref('subjective')
+const options = ref([])
+const selectedOption = ref('')
 const progress = ref({ current: 0, total: 0 })
 const status = ref('running')
 const answer = ref('')
@@ -154,6 +186,28 @@ const progressPercent = computed(() => {
   return Math.round((progress.value.current / progress.value.total) * 100)
 })
 
+// 选择题需选中一项、主观题需填写文字后才能提交
+const canSubmit = computed(() =>
+  questionType.value === 'choice'
+    ? !!selectedOption.value
+    : !!answer.value.trim()
+)
+
+// 选项序号字母 A/B/C/D…
+function optionLabel(i) {
+  return String.fromCharCode(65 + i)
+}
+
+// 把后端返回的题型/选项/题目写入本地状态，并重置作答
+function applyQuestion(data) {
+  question.value = data.question || ''
+  questionId.value = data.question_id || ''
+  questionType.value = data.question_type || 'subjective'
+  options.value = data.options || []
+  selectedOption.value = ''
+  answer.value = ''
+}
+
 async function loadContext() {
   loading.value = true
   errorMsg.value = ''
@@ -166,10 +220,9 @@ async function loadContext() {
     }
     consentRequired.value = false
     opening.value = data.opening || ''
-    question.value = data.question || ''
-    questionId.value = data.question_id || ''
     progress.value = data.progress || { current: 0, total: 0 }
     status.value = data.status || 'running'
+    applyQuestion(data)
   } catch (e) {
     errorMsg.value = e.message || '加载失败，请检查后端服务'
   } finally {
@@ -191,20 +244,21 @@ async function handleAgree() {
 }
 
 async function handleSubmit() {
-  if (!answer.value.trim()) return
+  if (!canSubmit.value) return
   submitting.value = true
   try {
-    const data = await submitAnswer(token, answer.value.trim())
+    // 选择题提交所选选项文本，主观题提交填写内容
+    const payloadAnswer =
+      questionType.value === 'choice' ? selectedOption.value : answer.value.trim()
+    const data = await submitAnswer(token, payloadAnswer)
     status.value = data.status
     lastType.value = data.status
     if (data.status === 'finished') {
       question.value = ''
     } else {
-      question.value = data.question || ''
-      questionId.value = data.question_id || ''
+      applyQuestion(data)
     }
     if (data.progress) progress.value = data.progress
-    answer.value = ''
   } catch (e) {
     errorMsg.value = e.message || '提交失败'
   } finally {
@@ -214,6 +268,7 @@ async function handleSubmit() {
 
 function reset() {
   answer.value = ''
+  selectedOption.value = ''
   lastType.value = ''
   loadContext()
 }
@@ -368,6 +423,63 @@ onMounted(loadContext)
   line-height: 1.6;
   font-family: inherit;
   color: #1f2937;
+}
+
+/* ── 选择题选项 ─────────────────────────────── */
+.choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.choice-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: #fff;
+}
+
+.choice-item:hover {
+  border-color: #818cf8;
+  background: #f8faff;
+}
+
+.choice-item.active {
+  border-color: #6366f1;
+  background: #eef2ff;
+}
+
+.choice-radio {
+  width: 16px;
+  height: 16px;
+  accent-color: #6366f1;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.choice-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #eef2ff;
+  color: #6366f1;
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.choice-text {
+  font-size: 15px;
+  color: #1f2937;
+  line-height: 1.5;
 }
 
 .answer-meta {

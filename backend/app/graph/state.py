@@ -13,11 +13,19 @@ class CandidateInfo(TypedDict):
     job_desc: str  # JD 文本，供出题/评分上下文
 
 
-class QuestionItem(TypedDict):
-    """预设问题项。"""
+class QuestionItem(TypedDict, total=False):
+    """预设问题项。
+
+    total=False：历史模板的 questions 仅有 id/text（主观题），新增字段均可缺省，
+    运行期通过 .get("type") 等安全读取，避免旧数据缺键导致异常。
+    """
 
     id: str  # 问题唯一 id（如 "q1"）
     text: str  # 问题内容
+    type: str  # 题型："subjective"（默认）| "choice"
+    options: list[str]  # 选择题选项（仅 choice 使用）
+    answer: str  # 选择题正确答案（选项文本，空串表示不设标准答案）
+    dimension: str  # 选择题映射的评分维度 key
 
 
 class RubricDimension(TypedDict):

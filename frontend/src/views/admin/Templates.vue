@@ -48,9 +48,58 @@
 
         <el-form-item label="预设问题" required>
           <div class="question-list">
-            <div v-for="(q, i) in form.questions" :key="i" class="question-row">
-              <el-input v-model="q.text" placeholder="面试问题" />
-              <el-button type="danger" text @click="removeQuestion(i)">删除</el-button>
+            <div v-for="(q, i) in form.questions" :key="i" class="question-item">
+              <div class="question-row">
+                <el-select v-model="q.type" style="width: 110px">
+                  <el-option label="主观题" value="subjective" />
+                  <el-option label="选择题" value="choice" />
+                </el-select>
+                <el-input v-model="q.text" placeholder="面试问题" />
+                <el-button type="danger" text @click="removeQuestion(i)">删除</el-button>
+              </div>
+
+              <!-- 选择题专属配置 -->
+              <div v-if="q.type === 'choice'" class="choice-editor">
+                <div v-for="(opt, oi) in q.options" :key="oi" class="option-row">
+                  <span class="option-tag">{{ optionLabel(oi) }}</span>
+                  <el-input v-model="q.options[oi]" placeholder="选项内容" />
+                  <el-button type="danger" text @click="removeOption(q, oi)">删除</el-button>
+                </div>
+                <el-button type="primary" text size="small" @click="addOption(q)">
+                  + 添加选项
+                </el-button>
+
+                <div class="choice-meta">
+                  <span class="meta-label">正确答案</span>
+                  <el-select
+                    v-model="q.answer"
+                    placeholder="不设标准答案"
+                    clearable
+                    style="width: 220px"
+                  >
+                    <el-option
+                      v-for="(opt, oi) in q.options"
+                      :key="oi"
+                      :label="opt || `选项 ${optionLabel(oi)}`"
+                      :value="opt"
+                    />
+                  </el-select>
+                  <span class="meta-label">评分维度</span>
+                  <el-select
+                    v-model="q.dimension"
+                    placeholder="不计入维度"
+                    clearable
+                    style="width: 160px"
+                  >
+                    <el-option
+                      v-for="d in form.rubric"
+                      :key="d.name"
+                      :label="d.name"
+                      :value="d.name"
+                    />
+                  </el-select>
+                </div>
+              </div>
             </div>
             <el-button type="primary" text @click="addQuestion">+ 添加问题</el-button>
           </div>
@@ -92,7 +141,7 @@ const dialogVisible = ref(false)
 const saving = ref(false)
 const form = ref({
   job_id: '',
-  questions: [{ text: '' }],
+  questions: [{ type: 'subjective', text: '', options: [], answer: '', dimension: '' }],
   rubric: [
     { name: '技术深度', weight: 0.4, max_score: 10 },
     { name: '项目经验', weight: 0.3, max_score: 10 },
@@ -101,6 +150,14 @@ const form = ref({
   ],
   max_follow_ups: 2,
 })
+
+function newQuestion() {
+  return { type: 'subjective', text: '', options: [], answer: '', dimension: '' }
+}
+
+function optionLabel(i) {
+  return String.fromCharCode(65 + i)
+}
 
 function jobTitle(id) {
   return jobs.value.find((j) => j.id === id)?.title || id
@@ -118,7 +175,7 @@ async function load() {
 function openCreate() {
   form.value = {
     job_id: '',
-    questions: [{ text: '' }],
+    questions: [newQuestion()],
     rubric: [
       { name: '技术深度', weight: 0.4, max_score: 10 },
       { name: '项目经验', weight: 0.3, max_score: 10 },
@@ -131,11 +188,24 @@ function openCreate() {
 }
 
 function addQuestion() {
-  form.value.questions.push({ text: '' })
+  form.value.questions.push(newQuestion())
 }
 
 function removeQuestion(i) {
   form.value.questions.splice(i, 1)
+}
+
+function addOption(q) {
+  q.options.push('')
+}
+
+function removeOption(q, oi) {
+  const removed = q.options[oi]
+  q.options.splice(oi, 1)
+  // 删除的选项若正是正确答案，清空答案
+  if (q.answer === removed) {
+    q.answer = ''
+  }
 }
 
 function addRubric() {
@@ -151,13 +221,7 @@ async function handleSave() {
     ElMessage.warning('请选择岗位')
     return
   }
-  const questions = form.value.questions
-    .filter((q) => q.text.trim())
-    .map((q, i) => ({ id: `q${i + 1}`, text: q.text.trim() }))
-  if (questions.length === 0) {
-    ElMessage.warning('请至少添加一个问题')
-    return
-  }
+
   const rubric = form.value.rubric
     .filter((d) => d.name.trim())
     .map((d, i) => ({
@@ -177,6 +241,39 @@ async function handleSave() {
     return
   }
 
+  // 维度名 -> 维度 key（选择题「评分维度」下拉按名称选择，落库时转成 key）
+  const nameToKey = {}
+  rubric.forEach((d) => {
+    nameToKey[d.name] = d.key
+  })
+
+  const questions = form.value.questions
+    .filter((q) => q.text.trim())
+    .map((q, i) => {
+      const item = { id: `q${i + 1}`, text: q.text.trim() }
+      if (q.type === 'choice') {
+        const opts = (q.options || []).map((o) => (o || '').trim()).filter(Boolean)
+        if (opts.length < 2) {
+          ElMessage.warning(`选择题「${item.text}」至少需要 2 个选项`)
+          throw new Error('choice-options-invalid')
+        }
+        const answer = (q.answer || '').trim()
+        if (answer && !opts.includes(answer)) {
+          ElMessage.warning(`选择题「${item.text}」的正确答案必须来自其选项`)
+          throw new Error('choice-answer-invalid')
+        }
+        item.type = 'choice'
+        item.options = opts
+        item.answer = answer
+        item.dimension = nameToKey[q.dimension] || ''
+      }
+      return item
+    })
+  if (questions.length === 0) {
+    ElMessage.warning('请至少添加一个问题')
+    return
+  }
+
   saving.value = true
   try {
     await createTemplate({
@@ -189,6 +286,10 @@ async function handleSave() {
     ElMessage.success('模板创建成功')
     dialogVisible.value = false
     load()
+  } catch (e) {
+    if (e?.message !== 'choice-options-invalid' && e?.message !== 'choice-answer-invalid') {
+      ElMessage.error(e?.message || '保存失败')
+    }
   } finally {
     saving.value = false
   }
@@ -228,6 +329,14 @@ onMounted(load)
   width: 100%;
 }
 
+.question-item {
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
 .question-row,
 .rubric-row {
   display: flex;
@@ -238,5 +347,43 @@ onMounted(load)
 
 .rubric-row .el-input-number {
   width: 120px;
+}
+
+.choice-editor {
+  padding: 8px 0 4px 0;
+}
+
+.option-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.option-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #eef2ff;
+  color: #6366f1;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.choice-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.meta-label {
+  font-size: 13px;
+  color: #606266;
 }
 </style>

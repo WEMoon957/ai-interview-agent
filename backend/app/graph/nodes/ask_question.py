@@ -48,12 +48,23 @@ def ask_question(state: InterviewState) -> dict:
         question_id = questions[0]["id"]
         q_type = "question"
 
+    # 当前题的题型与选项（选择题才有；追问恒为主观题）
+    current_question = questions[current_idx]
+    if q_type == "follow_up":
+        question_type = "subjective"
+        options: list[str] = []
+    else:
+        question_type = (current_question.get("type") or "subjective").strip() or "subjective"
+        options = list(current_question.get("options") or [])
+
     # 挂起并把当前问题返回给候选人（payload 也会被 API 层用于响应组装）
     payload = {
         "status": "waiting_answer",
-        "type": q_type,
+        "type": q_type,  # 流程类型：question / follow_up
         "question_id": question_id,
         "question": question_text,
+        "question_type": question_type,  # 题目类型：subjective / choice
+        "options": options,  # 选择题选项（主观题为空列表）
         "current_idx": current_idx,
         "total": len(questions),
         "follow_up_count": follow_up_count,

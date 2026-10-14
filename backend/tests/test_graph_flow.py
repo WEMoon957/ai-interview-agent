@@ -385,3 +385,113 @@ def test_graph_no_follow_up_when_disabled(monkeypatch):
     assert values.get("status") == "finished"
     # 每题各评一次，无追问答
     assert len(values.get("evaluations") or []) == 2
+
+
+# ── 选择题（type=choice）：确定性判分 + 无追问 ──────────────────
+def _choice_initial_state(thread_id: str) -> dict:
+    """构造含选择题的初始状态（无需 LLM，纯确定性判分）。"""
+    return {
+        "thread_id": thread_id,
+        "candidate": {"name": "张三", "resume_text": "resume", "job_desc": "jd"},
+        "questions": [
+            {
+                "id": "q1",
+                "text": "晚班你能接受吗？",
+                "type": "choice",
+                "options": ["完全接受", "可以接受", "不接受"],
+                "answer": "完全接受",
+                "dimension": "job_fit",
+            },
+            {
+                "id": "q2",
+                "text": "下列哪种是门店开业前必做的？",
+                "type": "choice",
+                "options": ["打扫卫生", "盘点库存", "拖地"],
+                "answer": "盘点库存",
+                "dimension": "tech_depth",
+            },
+        ],
+        "rubric": [
+            {"key": "tech_depth", "name": "技术深度", "weight": 0.40, "max_score": 10},
+            {"key": "experience", "name": "项目经验", "weight": 0.30, "max_score": 10},
+            {"key": "communication", "name": "沟通表达", "weight": 0.15, "max_score": 10},
+            {"key": "job_fit", "name": "岗位匹配", "weight": 0.15, "max_score": 10},
+        ],
+        "current_idx": 0,
+        "max_follow_ups": 2,
+        "follow_up_count": 0,
+        "messages": [],
+        "evaluations": [],
+        "status": "pending",
+        "report": {},
+    }
+
+
+def test_evaluate_choice_correct_and_wrong():
+    """选择题确定性判分：选对满分、选错 0 分、不设标准答案不贡献维度分。"""
+    evaluate_mod = importlib.import_module("app.graph.nodes.evaluate")
+
+    rubric = [{"key": "job_fit", "name": "岗位匹配", "max_score": 10}]
+
+    # 选对
+    r = evaluate_mod._evaluate_choice(
+        {"answer": "A", "dimension": "job_fit"}, "A", rubric
+    )
+    assert r.scores == {"job_fit": 10.0}
+    assert r.follow_up_needed is False
+
+    # 选错
+    r = evaluate_mod._evaluate_choice(
+        {"answer": "A", "dimension": "job_fit"}, "B", rubric
+    )
+    assert r.scores == {"job_fit": 0.0}
+
+    # 未设标准答案：不贡献维度分
+    r = evaluate_mod._evaluate_choice({"answer": ""}, "A", rubric)
+    assert r.scores == {}
+    assert "A" in r.comment
+
+
+def test_graph_choice_flow_deterministic(monkeypatch):
+    """选择题全程不调用 LLM：interrupt 携带题型与选项，答完直接收尾、无追问。"""
+    from langgraph.checkpoint.memory import MemorySaver
+    from langgraph.types import Command
+
+    evaluate_mod = importlib.import_module("app.graph.nodes.evaluate")
+    from app.graph.builder import build_interview_graph
+
+    # 若选择题误走 LLM 分支，这里会因 fake 未配置而崩——用炸弹 fake 兜底探测
+    def _boom_factory(*_a, **_k):
+        raise AssertionError("选择题不应调用 LLM")
+
+    monkeypatch.setattr(evaluate_mod, "get_llm", _boom_factory)
+
+    graph = build_interview_graph(checkpointer=MemorySaver())
+    config = {"configurable": {"thread_id": "t-choice"}}
+
+    graph.invoke(_choice_initial_state("t-choice"), config)
+    first_q = _interrupt_value(graph, config)
+    assert first_q is not None
+    assert first_q["type"] == "question"
+    assert first_q["question_type"] == "choice"
+    assert first_q["options"] == ["完全接受", "可以接受", "不接受"]
+
+    # 第 1 题选对 -> 进入第 2 题（无追问）
+    graph.invoke(Command(resume="完全接受"), config)
+    nq = _interrupt_value(graph, config)
+    assert nq is not None and nq["type"] == "question"
+    assert nq["question_type"] == "choice"
+    assert nq["current_idx"] == 1
+
+    # 第 2 题选错 -> 收尾
+    graph.invoke(Command(resume="拖地"), config)
+    assert _interrupt_value(graph, config) is None
+
+    values = graph.get_state(config).values or {}
+    assert values.get("status") == "finished"
+    evals = values.get("evaluations") or []
+    assert len(evals) == 2
+    # 第 1 题正确 -> 岗位匹配满分；第 2 题错误 -> 技术深度 0 分
+    assert evals[0]["scores"] == {"job_fit": 10.0}
+    assert evals[1]["scores"] == {"tech_depth": 0.0}
+    assert all(e["follow_up_needed"] is False for e in evals)

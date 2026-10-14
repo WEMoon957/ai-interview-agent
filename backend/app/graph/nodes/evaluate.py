@@ -197,13 +197,58 @@ def _persist_evaluation(state: InterviewState, record: EvaluationRecord) -> None
         db.close()
 
 
+def _get_dim_max_score(rubric: list, dim_key: str) -> float:
+    """从评分维度列表中读取指定维度的满分（缺省回落 10）。"""
+    for d in rubric or []:
+        key = d.get("key") if isinstance(d, dict) else getattr(d, "key", None)
+        if key == dim_key:
+            raw = d.get("max_score") if isinstance(d, dict) else getattr(d, "max_score", None)
+            try:
+                return float(raw or 10)
+            except (TypeError, ValueError):
+                return 10.0
+    return 10.0
+
+
+def _evaluate_choice(question: dict, answer: str, rubric: list) -> AnswerScore:
+    """选择题确定性判分（不走 LLM，无追问）。
+
+    - 题目配置了 answer（标准答案）：选中即该维度满分，选错记 0 分；
+    - 未配置 answer：仅记录所选，不贡献维度分（scores={}）。
+    """
+    selected = (answer or "").strip()
+    correct = (question.get("answer") or "").strip()
+    dim_key = (question.get("dimension") or "").strip()
+
+    scores: dict[str, float] = {}
+    if correct:
+        is_correct = selected == correct
+        if dim_key:
+            scores[dim_key] = _get_dim_max_score(rubric, dim_key) if is_correct else 0.0
+        comment = (
+            f"选择题作答{'正确' if is_correct else '错误'}"
+            f"（选择：{selected or '未作答'}；正确答案：{correct}）"
+        )
+    else:
+        comment = f"选择题作答（选择：{selected or '未作答'}）"
+
+    return AnswerScore(
+        scores=scores,
+        comment=comment,
+        follow_up_needed=False,  # 选择题一律不追问
+        follow_up_question="",
+    )
+
+
 def evaluate(state: InterviewState) -> dict:
     """对最近一次回答做结构化评分，追加到 evaluations 并落库。
 
-    评分走「普通 LLM + 纯文本 JSON 输出 + 手动解析」而非 ``with_structured_output``：
-    DeepSeek V4.1 Flash（deepseek-flash）等 thinking mode 模型既不支持 tool_choice
-    （function calling）也不支持 response_format（json_schema），但支持在 prompt 中
-    要求输出 JSON，故此处统一用 JSON 文本方案以保证多提供商兼容。
+    选择题（type=choice）走确定性判分（正确/错误，不调用 LLM、不追问）；
+    主观题走「普通 LLM + 纯文本 JSON 输出 + 手动解析」而非
+    ``with_structured_output``：DeepSeek V4.1 Flash（deepseek-flash）等
+    thinking mode 模型既不支持 tool_choice（function calling）也不支持
+    response_format（json_schema），但支持在 prompt 中要求输出 JSON，
+    故主观题统一用 JSON 文本方案以保证多提供商兼容。
 
     健壮性（真实环境踩坑）：LLM 偶发缺字段/JSON 异常/超时等任何评分失败，
     均降级为中性评分记录（scores={} 该题不计入维度汇总，不追问），面试
@@ -211,9 +256,24 @@ def evaluate(state: InterviewState) -> dict:
     """
     questions = state.get("questions") or []
     current_idx = state.get("current_idx", 0)
-    question_id = questions[current_idx]["id"] if questions else ""
+    current_question = questions[current_idx] if questions else {}
+    question_id = current_question.get("id", "") if current_question else ""
 
     question_text, answer = _last_qa(state.get("messages") or [])
+
+    # 选择题：确定性判分，跳过 LLM 分支
+    question_type = (current_question.get("type") or "subjective").strip() or "subjective"
+    if question_type == "choice":
+        choice_score = _evaluate_choice(current_question, answer, state.get("rubric") or [])
+        record = EvaluationRecord(
+            question_id=question_id,
+            scores=choice_score.scores,
+            comment=choice_score.comment,
+            follow_up_needed=False,
+            follow_up_question="",
+        )
+        _persist_evaluation(state, record)
+        return {"evaluations": [record.model_dump(mode="json")]}
 
     from app.config import get_settings
 

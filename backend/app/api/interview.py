@@ -111,6 +111,15 @@ def _progress(values: dict, current_idx: int | None = None) -> dict:
     return {"current": cur, "total": total}
 
 
+def _question_meta(interrupt_value: dict | None) -> dict:
+    """从 interrupt 载荷提取题型与选项（主观题返回空列表）。"""
+    value = interrupt_value or {}
+    return {
+        "question_type": value.get("question_type") or "subjective",
+        "options": list(value.get("options") or []),
+    }
+
+
 @router.get("/{token}")
 def get_context(token: str, db: Session = Depends(get_db)):
     """获取面试上下文（首次调用触发跑图并挂起在首题）。
@@ -163,6 +172,7 @@ def get_context(token: str, db: Session = Depends(get_db)):
                 "opening": opening,
                 "question": question,
                 "question_id": question_id,
+                **_question_meta(interrupt_value),
                 "progress": _progress(values, current_idx),
                 "status": "running",
                 "consent": _consent_payload(sess),
@@ -191,6 +201,7 @@ def get_context(token: str, db: Session = Depends(get_db)):
             "opening": _opening_from(values),
             "question": (interrupt_value or {}).get("question", ""),
             "question_id": (interrupt_value or {}).get("question_id", ""),
+            **_question_meta(interrupt_value),
             "progress": _progress(values, (interrupt_value or {}).get("current_idx", 0)),
             "status": "running",
             "consent": _consent_payload(sess),
@@ -247,6 +258,7 @@ def submit_answer(token: str, payload: AnswerSubmit, db: Session = Depends(get_d
                 "status": status,
                 "question": interrupt_value.get("question", ""),
                 "question_id": interrupt_value.get("question_id", ""),
+                **_question_meta(interrupt_value),
                 "progress": _progress(values, interrupt_value.get("current_idx", 0)),
                 "message": "",
             }

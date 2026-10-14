@@ -13,10 +13,19 @@ class RubricDimension(BaseModel):
 
 
 class Question(BaseModel):
-    """预设问题（模板 questions 元素）。"""
+    """预设问题（模板 questions 元素）。
+
+    type 取值：
+      - "subjective"（主观题，默认）：候选人自由作答，走 LLM 评分；
+      - "choice"（选择题）：候选人从 options 中单选，走确定性判分。
+    """
 
     id: str = Field(description="问题唯一 id，如 q1")
     text: str = Field(description="问题内容")
+    type: str = Field(default="subjective", description="题型：subjective | choice")
+    options: list[str] = Field(default_factory=list, description="选择题选项列表（仅 choice 使用）")
+    answer: str = Field(default="", description="选择题正确答案（选项文本，与 options 完全一致；留空表示不设标准答案）")
+    dimension: str = Field(default="", description="选择题映射的评分维度 key（用于确定性判分计入该维度）")
 
 
 class AnswerScore(BaseModel):
