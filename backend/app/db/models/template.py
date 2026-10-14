@@ -24,5 +24,7 @@ class InterviewTemplate(TimestampMixin, Base):
     duration_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     # 每题追问上限（共享知识 #9，默认 2）
     max_follow_ups: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    # 文化匹配配置：{"enabled": bool, "dimension_key": "culture_fit"}；{} 表示未启用（CC-3）
+    culture_fit: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
     job = relationship("JobPosting", lazy="selectin")

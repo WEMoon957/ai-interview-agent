@@ -44,6 +44,8 @@ class TemplateCreate(BaseModel):
     rubric: list[RubricDimension] = Field(min_length=1, description="评分维度")
     duration_limit: int = Field(default=30, ge=1, description="面试时长上限（分钟）")
     max_follow_ups: int = Field(default=2, ge=0, description="每题追问上限")
+    # 文化匹配配置：{"enabled": bool, "dimension_key": "culture_fit"}；缺省未启用
+    culture_fit: dict = Field(default_factory=dict, description="文化匹配配置（enabled/dimension_key）")
 
 
 class TemplateOut(BaseModel):
@@ -55,6 +57,7 @@ class TemplateOut(BaseModel):
     rubric: list[RubricDimension]
     duration_limit: int
     max_follow_ups: int
+    culture_fit: dict = Field(default_factory=dict, description="文化匹配配置")
 
 
 class SessionCreate(BaseModel):
@@ -64,6 +67,25 @@ class SessionCreate(BaseModel):
     name: str
     email: str = ""
     phone: str = ""
+
+
+# ── 公司文化档案（单例，一段公司介绍文字）─────────────────
+
+
+class CompanyProfileOut(BaseModel):
+    """公司文化档案（全局单例）。"""
+
+    id: str | None = Field(default=None, description="档案 id（未配置时为 null）")
+    content: str = Field(default="", description="公司介绍自由文字（公司是谁 + 现状 + 团队氛围 + 用工特点）")
+    updated_by: str = Field(default="", description="最近保存人")
+    updated_at: str | None = Field(default=None, description="最近保存时间（ISO8601）")
+
+
+class CompanyProfileUpdate(BaseModel):
+    """保存公司文化档案请求体（整篇覆盖）。"""
+
+    content: str = Field(default="", description="公司介绍自由文字")
+    updated_by: str = Field(default="", description="保存人（可选）")
 
 
 class SessionOut(BaseModel):

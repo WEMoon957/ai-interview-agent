@@ -72,6 +72,9 @@ def _build_initial_state(db: Session, sess: InterviewSession) -> dict:
             "resume_text": resume.parsed_text if resume else "",
             "job_desc": job.jd_text if job else "",
         },
+        # 公司介绍取会话快照（发链接时写入，CC-4）；存量 / 未配置会话为空字典，
+        # load_context 走无介绍分支，行为与改造前一致
+        "company_profile": sess.company_profile_snapshot or {},
         "questions": template.questions if template else [],
         "rubric": template.rubric if template else [],
         "current_idx": 0,

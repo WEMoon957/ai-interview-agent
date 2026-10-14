@@ -26,6 +26,7 @@ from app.db.models import (
 )
 from app.exceptions import BizError
 from app.services.cascade import candidate_is_orphan, purge_candidate
+from app.services.company_profile import snapshot_company_profile
 from app.services.feishu_notify import notify_screening_recommendations
 from app.services.resume_parser import parse_resume
 from app.services.resume_screening import recommendation_from_score, screen_resume
@@ -171,6 +172,8 @@ async def upload_and_screen(
                     status="pending",
                     thread_id=str(uuid.uuid4()),
                     started_at=None,
+                    # 发链接时快照当前生效的公司介绍
+                    company_profile_snapshot=snapshot_company_profile(db),
                 )
                 db.add(session)
                 db.flush()
@@ -402,6 +405,8 @@ def _invite_one(
         status="pending",
         thread_id=str(uuid.uuid4()),
         started_at=None,
+        # 发链接时快照当前生效的公司介绍（批量 invite 与初筛自动发起都走这里）
+        company_profile_snapshot=snapshot_company_profile(db),
     )
     db.add(session)
     db.flush()

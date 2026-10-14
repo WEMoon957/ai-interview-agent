@@ -26,6 +26,12 @@ export const deleteSession = (sessionId) => request.delete(`/admin/sessions/${se
 
 export const getReport = (sessionId) => request.get(`/admin/sessions/${sessionId}/report`)
 
+// ── 公司文化档案（全局单例：一篇公司介绍文字）────────────
+// 发起面试时把这篇文字快照进会话，候选人开场白自动带上它
+export const getCompanyProfile = () => request.get('/admin/company-profile')
+
+export const updateCompanyProfile = (data) => request.put('/admin/company-profile', data)
+
 // ── 候选人端 ───────────────────────────────────────
 export const getInterviewContext = (token) => request.get(`/interview/${token}`)
 

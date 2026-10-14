@@ -11,6 +11,10 @@
           <el-icon><Briefcase /></el-icon>
           <span>岗位管理</span>
         </el-menu-item>
+        <el-menu-item index="/console/company">
+          <el-icon><Reading /></el-icon>
+          <span>公司文化</span>
+        </el-menu-item>
         <el-menu-item index="/console/templates">
           <el-icon><Document /></el-icon>
           <span>面试模板</span>
@@ -52,7 +56,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Odometer, Briefcase, Document, Files, User, OfficeBuilding, DataAnalysis, PieChart } from '@element-plus/icons-vue'
+import { Odometer, Briefcase, Document, Files, User, OfficeBuilding, DataAnalysis, PieChart, Reading } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const activeMenu = computed(() => route.path)

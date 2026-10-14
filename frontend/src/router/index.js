@@ -32,6 +32,12 @@ const routes = [
         meta: { title: '岗位管理' },
       },
       {
+        path: 'company',
+        name: 'company',
+        component: () => import('../views/admin/Company.vue'),
+        meta: { title: '公司文化' },
+      },
+      {
         path: 'templates',
         name: 'templates',
         component: () => import('../views/admin/Templates.vue'),

@@ -5,10 +5,17 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, ok
-from app.api.schemas import JobCreate, JobUpdate, TemplateCreate
+from app.api.schemas import (
+    CompanyProfileOut,
+    CompanyProfileUpdate,
+    JobCreate,
+    JobUpdate,
+    TemplateCreate,
+)
 from app.db.models import (
     AnswerEvaluation,
     Candidate,
+    CompanyProfile,
     InterviewSession,
     InterviewTemplate,
     JobPosting,
@@ -17,6 +24,7 @@ from app.db.models import (
 )
 from app.exceptions import BizError
 from app.services.cascade import purge_candidate, purge_job, purge_template
+from app.services.company_profile import get_active_profile, save_profile, snapshot_company_profile
 from app.services.resume_parser import parse_resume
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -70,6 +78,44 @@ def list_jobs(db: Session = Depends(get_db)):
             }
             for j in jobs
         ]
+    )
+
+
+# ── 公司文化档案（全局单例，一段公司介绍文字）──────────────
+
+
+@router.get("/company-profile")
+def get_company_profile(db: Session = Depends(get_db)):
+    """读取公司文化档案；未配置时返回空档案（content 为空串）。"""
+    row = get_active_profile(db)
+    if row is None:
+        return ok(CompanyProfileOut().model_dump())
+    return ok(
+        CompanyProfileOut(
+            id=str(row.id),
+            content=row.content or "",
+            updated_by=row.updated_by or "",
+            updated_at=row.updated_at.isoformat() if row.updated_at else None,
+        ).model_dump()
+    )
+
+
+@router.put("/company-profile")
+def update_company_profile(payload: CompanyProfileUpdate, db: Session = Depends(get_db)):
+    """整篇保存公司介绍（单例：首次创建，后续更新同一行）。
+
+    保存后仅影响之后发起的面试（发链接时快照），已发出的会话不受影响。
+    """
+    row = save_profile(db, payload.content or "", payload.updated_by or "")
+    db.commit()
+    db.refresh(row)
+    return ok(
+        CompanyProfileOut(
+            id=str(row.id),
+            content=row.content or "",
+            updated_by=row.updated_by or "",
+            updated_at=row.updated_at.isoformat() if row.updated_at else None,
+        ).model_dump()
     )
 
 
@@ -147,6 +193,7 @@ def list_templates(db: Session = Depends(get_db)):
                 "rubric": t.rubric,
                 "duration_limit": t.duration_limit,
                 "max_follow_ups": t.max_follow_ups,
+                "culture_fit": t.culture_fit or {},
                 "created_at": t.created_at.isoformat() if t.created_at else None,
             }
             for t in templates
@@ -156,7 +203,7 @@ def list_templates(db: Session = Depends(get_db)):
 
 @router.post("/templates")
 def create_template(payload: TemplateCreate, db: Session = Depends(get_db)):
-    """创建面试模板（问题集 + 评分维度 + 追问上限）。"""
+    """创建面试模板（问题集 + 评分维度 + 追问上限 + 文化匹配配置）。"""
     job = db.get(JobPosting, payload.job_id)
     if job is None:
         raise BizError(404, "岗位不存在", http_status=404)
@@ -167,6 +214,7 @@ def create_template(payload: TemplateCreate, db: Session = Depends(get_db)):
         rubric=[r.model_dump(mode="json") for r in payload.rubric],
         duration_limit=payload.duration_limit,
         max_follow_ups=payload.max_follow_ups,
+        culture_fit=payload.culture_fit or {},
     )
     db.add(template)
     db.commit()
@@ -180,6 +228,7 @@ def create_template(payload: TemplateCreate, db: Session = Depends(get_db)):
             "rubric": template.rubric,
             "duration_limit": template.duration_limit,
             "max_follow_ups": template.max_follow_ups,
+            "culture_fit": template.culture_fit or {},
         }
     )
 
@@ -233,6 +282,8 @@ def create_session(
         status="pending",
         thread_id=str(uuid.uuid4()),
         started_at=None,
+        # 发链接时快照当前生效的公司介绍（HR 事后改档案不影响本会话）
+        company_profile_snapshot=snapshot_company_profile(db),
     )
     db.add(session)
     db.commit()

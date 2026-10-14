@@ -54,6 +54,9 @@ class InterviewState(TypedDict, total=False):
     thread_id: str
     session_id: str
     candidate: CandidateInfo
+    # 公司文化档案快照（发链接时写入会话，形如 {"content": "..."}；空字典表示未配置）
+    # 只读不写：由 _build_initial_state 从 interview_sessions.company_profile_snapshot 注入
+    company_profile: dict
     questions: list[QuestionItem]
     rubric: list[RubricDimension]
     current_idx: int  # 当前题目下标
