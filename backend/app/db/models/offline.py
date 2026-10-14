@@ -6,7 +6,7 @@ AI 面试达标后，由 HR 或店长约线下复试并人工打分：本表记�
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -32,6 +32,9 @@ class OfflineInterview(TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("job_postings.id"), nullable=False, index=True
     )
 
+    # 来源路径：online（线上投递）/ walk_in（到店直招，无初筛无 AI 面试）
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="online")
+
     # 约面信息
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     location: Mapped[str] = mapped_column(String(255), nullable=False, default="")
@@ -41,6 +44,14 @@ class OfflineInterview(TimestampMixin, Base):
 
     # 状态：scheduled（已约）/ done（已完成）/ no_show（爽约）/ cancelled（已取消）
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="scheduled")
+
+    # 店长上传的整场面试录音（相对 upload_dir 的路径；文件落盘，见 services/audio_storage.py）
+    audio_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    audio_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    audio_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    audio_uploaded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # 打分结果（人工）
     score: Mapped[float | None] = mapped_column(Float, nullable=True)

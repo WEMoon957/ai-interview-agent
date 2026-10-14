@@ -1049,6 +1049,61 @@ def build_screening_task(
     return title, "\n".join(lines)
 
 
+def build_summary_task(
+    *,
+    job_title: str,
+    offer_items: list[dict],
+    review_items: list[dict],
+    snapshot_at: str = "",
+    max_items: int = 20,
+) -> tuple[str, str]:
+    """构造汇总复核跟进的待办（标题, 描述）。
+
+    与彩色卡片一一对应，确保「复核 + 办理 offer / 入职」这件事落到 HR 的待办列表里，
+    而不是只有一条容易被刷过去的卡片消息。
+    """
+    total = len(offer_items) + len(review_items)
+    title = (
+        f"【{job_title or '招聘'}】汇总完成 · {total} 人待复核"
+        f"（建议发 offer {len(offer_items)} 人）"
+    )
+
+    def _render(items: list[dict]) -> list[str]:
+        out = []
+        for idx, item in enumerate(_cap(items, max_items), start=1):
+            out.append(
+                f"{idx}. {item.get('candidate_name') or '（未填写姓名）'} — "
+                f"最终 {_fmt_score(item.get('final_score'))} 分"
+                f"（{item.get('final_verdict') or '—'}）"
+            )
+            out.append(
+                f"   简历初筛 {_fmt_score(item.get('screening_score'))} ／ "
+                f"AI 面试 {_fmt_score(item.get('ai_interview_score'))} ／ "
+                f"HR 打分 {_fmt_score(item.get('offline_score'))}"
+            )
+        if len(items) > max_items:
+            out.append(f"… 另有 {len(items) - max_items} 人未列出")
+        return out
+
+    lines = [
+        f"岗位：{job_title or '全部岗位'}",
+        f"汇总时间：{snapshot_at or '—'}",
+        f"待复核：{total} 人（建议发 offer {len(offer_items)} 人）",
+        "",
+    ]
+    if offer_items:
+        lines.append("【建议发放 offer】")
+        lines += _render(offer_items)
+        lines.append("")
+    if review_items:
+        lines.append("【建议复核后决定】")
+        lines += _render(review_items)
+        lines.append("")
+
+    lines.append("请复核面试结论，办理 offer 发放与入职手续；如结论有异议请回后台调整 HR 打分。")
+    return title, "\n".join(lines)
+
+
 # ────────────────────────────── 编排：初筛推荐 / 汇总复核 ──────────────────────────────
 
 
@@ -1154,15 +1209,16 @@ def notify_summary_review(
     items: list[dict],
     settings: Settings | None = None,
     sender: CardSender | None = None,
+    creator: TaskCreator | None = None,
     snapshot_at: str = "",
 ) -> dict:
-    """招聘汇总完成后，提醒 HR 复核并办理 offer 发放 / 入职。绝不抛异常。
+    """招聘汇总完成后，提醒 HR 复核并办理 offer 发放 / 入职；同时创建飞书待办。绝不抛异常。
 
     Args:
         items: 待复核候选人（含 candidate_name / final_score / final_verdict / 三段分）。
 
     Returns:
-        ``{"status": "sent"|"skipped"|"failed", ...}``
+        ``{"status": "sent"|"skipped"|"failed", ...}``；``task`` 字段为待办创建结果。
     """
     settings = settings or get_settings()
 
@@ -1190,11 +1246,41 @@ def notify_summary_review(
     )
 
     ok, recipients, err = send_card(card, settings=settings, sender=sender)
-    if ok:
-        return {"status": "sent", "recipients": recipients, "reviewed": len(rows)}
-    return {
-        "status": "failed",
-        "reason": err or "未知错误",
+    if not ok:
+        return {
+            "status": "failed",
+            "reason": err or "未知错误",
+            "recipients": recipients,
+            "reviewed": len(rows),
+        }
+
+    result: dict = {
+        "status": "sent",
         "recipients": recipients,
         "reviewed": len(rows),
     }
+
+    # 卡片之外再建飞书待办：确保「复核 + 办理 offer / 入职」落到 HR 的待办列表
+    if settings.feishu_task_enabled:
+        title, desc = build_summary_task(
+            job_title=job_title,
+            offer_items=offer_items,
+            review_items=review_items,
+            snapshot_at=snapshot_at,
+            max_items=settings.feishu_notify_max_items,
+        )
+        try:
+            task_ok, assignees, task_err = create_tasks(
+                title, desc, settings=settings, creator=creator
+            )
+        except Exception as exc:  # noqa: BLE001 - 待办失败不影响卡片已送达的事实
+            task_ok, assignees, task_err = False, [], repr(exc)
+        result["task"] = {
+            "status": "created" if task_ok else "failed",
+            "assignees": assignees,
+            "reason": task_err,
+        }
+    else:
+        result["task"] = {"status": "skipped", "reason": "待办创建未启用"}
+
+    return result

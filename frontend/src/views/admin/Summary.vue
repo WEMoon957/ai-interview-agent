@@ -13,11 +13,29 @@
               <el-radio-button label="snapshot">已落库快照</el-radio-button>
             </el-radio-group>
             <el-button @click="exportCsv">导出 CSV</el-button>
-            <el-button :loading="notifying" @click="pushToHr">推送复核给 HR</el-button>
+            <el-button :loading="notifying" @click="pushToHr">重新推送复核</el-button>
             <el-button type="primary" :loading="rebuilding" @click="doRebuild">生成 / 更新汇总落库</el-button>
           </div>
         </div>
       </template>
+
+      <el-alert
+        type="success"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+        title="汇总落库后会自动推送给 HR：复核提醒卡片 + 飞书待办（提醒办理 offer 发放与入职），无需手动点击。"
+      />
+      <el-alert
+        v-if="pushFailed"
+        type="error"
+        :closable="true"
+        show-icon
+        style="margin-bottom: 12px"
+        title="自动推送或待办创建失败"
+        :description="pushFailReason"
+        @close="notifyIssues = []"
+      />
 
       <!-- 统计卡片 -->
       <div class="stats">
@@ -36,6 +54,12 @@
         </el-table-column>
         <el-table-column label="岗位" min-width="120">
           <template #default="{ row }">{{ row.job_title || jobTitle(row.job_id) }}</template>
+        </el-table-column>
+        <el-table-column label="来源" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="row.is_walk_in" type="warning" size="small">到店直招</el-tag>
+            <el-tag v-else type="info" size="small" effect="plain">线上投递</el-tag>
+          </template>
         </el-table-column>
         <el-table-column label="初筛分" width="90">
           <template #default="{ row }">{{ num(row.screening_score) }}</template>
@@ -96,6 +120,20 @@ const loading = ref(false)
 const rebuilding = ref(false)
 const notifying = ref(false)
 
+// 自动推送 / 待办的异常（用于显著提示，避免"以为没推"）
+const notifyIssues = ref([])
+const pushFailed = computed(() => notifyIssues.value.length > 0)
+const pushFailReason = computed(() =>
+  notifyIssues.value
+    .map((n) => {
+      const parts = []
+      if (n.status === 'failed') parts.push(`卡片：${n.reason || '未知原因'}`)
+      if (n.task?.status === 'failed') parts.push(`待办：${n.task.reason || '未知原因'}`)
+      return `${n.job_title || '岗位'} — ${parts.join('；')}`
+    })
+    .join('　|　')
+)
+
 const completeCount = computed(() => rows.value.filter((r) => r.is_complete).length)
 const topCount = computed(
   () => rows.value.filter((r) => ['强烈推荐', '推荐'].includes(r.final_verdict)).length
@@ -150,12 +188,21 @@ async function doRebuild() {
   try {
     const params = jobId.value ? { job_id: jobId.value } : {}
     const res = await rebuildSummary(params)
-    const sent = (res.notify || []).filter((n) => n.status === 'sent')
-    const failed = (res.notify || []).filter((n) => n.status === 'failed')
+    const results = res.notify || []
+    notifyIssues.value = results.filter(
+      (n) => n.status === 'failed' || n.task?.status === 'failed'
+    )
+    const sent = results.filter((n) => n.status === 'sent')
+    const tasks = sent.filter((n) => n.task?.status === 'created')
     let msg = `汇总已落库，共更新 ${res.saved} 条`
     if (sent.length) msg += `；已推送 HR 飞书（${sent.length} 个岗位）`
-    if (failed.length) msg += `；⚠️ ${failed.length} 个岗位推送失败`
-    ElMessage.success(msg)
+    if (tasks.length) msg += `；已建飞书待办（${tasks.length} 个岗位）`
+    if (notifyIssues.value.length) msg += `；⚠️ ${notifyIssues.value.length} 个岗位推送异常`
+    if (notifyIssues.value.length) {
+      ElMessage.warning(msg)
+    } else {
+      ElMessage.success(msg)
+    }
     source.value = 'snapshot'
     await reload()
   } finally {
@@ -168,7 +215,18 @@ async function pushToHr() {
   try {
     const params = jobId.value ? { job_id: jobId.value } : {}
     const res = await notifySummary(params)
-    ElMessage.success(`已推送 HR 飞书：${res.jobs} 个岗位`)
+    const results = res.results || []
+    notifyIssues.value = results.filter(
+      (n) => n.status === 'failed' || n.task?.status === 'failed'
+    )
+    const tasks = results.filter((n) => n.task?.status === 'created')
+    let msg = `已推送 HR 飞书：${res.jobs} 个岗位`
+    if (tasks.length) msg += `；已建飞书待办（${tasks.length} 个岗位）`
+    if (notifyIssues.value.length) {
+      ElMessage.warning(`${msg}；⚠️ ${notifyIssues.value.length} 个岗位异常`)
+    } else {
+      ElMessage.success(msg)
+    }
   } finally {
     notifying.value = false
   }

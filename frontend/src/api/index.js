@@ -71,6 +71,22 @@ export const scoreOfflineInterview = (id, data) =>
 export const deleteOfflineInterview = (id) =>
   request.delete(`/admin/offline-interviews/${id}`)
 
+// 到店直招：一次创建候选人（姓名/手机/来源渠道）+ 线下复试记录，可选带面试录音
+export const createWalkInInterview = (formData) =>
+  request.post('/admin/offline-interviews/walk-in', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+
+// 上传 / 替换整场面试录音
+export const uploadOfflineAudio = (id, formData) =>
+  request.post(`/admin/offline-interviews/${id}/audio`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+
+// 录音播放 / 下载地址（默认内联播放，download=true 强制下载）
+export const offlineAudioUrl = (id, download = false) =>
+  `/admin/offline-interviews/${id}/audio${download ? '?download=true' : ''}`
+
 // ── 招聘汇总（全链路聚合 + 落库）────────────────────
 export const getSummary = (params) => request.get('/admin/summary', { params })
 

@@ -231,6 +231,101 @@ def test_summary_notify_sends_orange_card_with_offer_and_review_sections():
     assert "入职手续" in md
 
 
+# ────────────────────────────── 汇总复核待办 ──────────────────────────────
+
+
+def test_build_summary_task_title_and_desc():
+    title, desc = fn.build_summary_task(
+        job_title="店员",
+        offer_items=[_summary_items()[0]],
+        review_items=_summary_items()[1:],
+        snapshot_at="2026-10-14 09:20",
+    )
+    assert "店员" in title and "3 人待复核" in title and "建议发 offer 1 人" in title
+    assert "汇总时间：2026-10-14 09:20" in desc
+    assert "【建议发放 offer】" in desc
+    assert "【建议复核后决定】" in desc
+    assert "张三" in desc and "86.4" in desc
+    assert "简历初筛 91.0 ／ AI 面试 82.0 ／ HR 打分 88.0" in desc
+    assert "offer 发放与入职手续" in desc
+
+
+def test_build_summary_task_caps_items():
+    many = [
+        {"candidate_name": f"候选人{i}", "final_score": 90 - i, "final_verdict": "推荐"}
+        for i in range(30)
+    ]
+    _, desc = fn.build_summary_task(
+        job_title="岗位", offer_items=many, review_items=[], max_items=5
+    )
+    assert "候选人0" in desc
+    assert "候选人9" not in desc
+    assert "另有 25 人未列出" in desc
+
+
+def test_summary_notify_creates_task_when_enabled():
+    sender, _ = _capture_sender()
+    tasks = []
+
+    def creator(assignee, summary, description, settings):
+        tasks.append({"assignee": assignee, "summary": summary, "description": description})
+        return True, ""
+
+    result = fn.notify_summary_review(
+        job_title="店员", items=_summary_items(),
+        settings=make_settings(feishu_task_enabled=True),
+        sender=sender, creator=creator, snapshot_at="2026-10-14 09:20",
+    )
+    assert result["status"] == "sent"
+    assert result["task"]["status"] == "created"
+    assert result["task"]["assignees"] == ["ou_test_hr"]
+    assert len(tasks) == 1
+    assert "店员" in tasks[0]["summary"]
+    assert "张三" in tasks[0]["description"]
+    assert "offer 发放与入职手续" in tasks[0]["description"]
+
+
+def test_summary_notify_skips_task_when_disabled():
+    result = fn.notify_summary_review(
+        job_title="岗位", items=_summary_items(),
+        settings=make_settings(feishu_task_enabled=False), sender=lambda *_: (True, ""),
+    )
+    assert result["status"] == "sent"
+    assert result["task"]["status"] == "skipped"
+
+
+def test_summary_notify_keeps_sent_status_when_task_fails():
+    """待办创建失败不影响「卡片已送达」的判定。"""
+    def boom(*_):
+        raise RuntimeError("task api down")
+
+    result = fn.notify_summary_review(
+        job_title="岗位", items=_summary_items(),
+        settings=make_settings(feishu_task_enabled=True),
+        sender=lambda *_: (True, ""), creator=boom,
+    )
+    assert result["status"] == "sent"
+    assert result["task"]["status"] == "failed"
+
+
+def test_summary_notify_card_failure_skips_task():
+    """卡片都没发出去就不该建待办。"""
+    called = {"n": 0}
+
+    def creator(*_):
+        called["n"] += 1
+        return True, ""
+
+    result = fn.notify_summary_review(
+        job_title="岗位", items=_summary_items(),
+        settings=make_settings(feishu_task_enabled=True),
+        sender=lambda *_: (False, "230013 无可用范围"), creator=creator,
+    )
+    assert result["status"] == "failed"
+    assert "task" not in result
+    assert called["n"] == 0
+
+
 # ────────────────────────────── 卡片双传输 ──────────────────────────────
 
 

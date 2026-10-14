@@ -71,6 +71,54 @@ def compute_final_score(
     return _round(sum(score * w for score, w in parts) / total_w)
 
 
+def resolve_is_walk_in(
+    *,
+    screening: float | None,
+    ai: float | None,
+    screening_id: Any = None,
+    session_id: Any = None,
+    offline_source: str = "online",
+) -> bool:
+    """是否属于「到店直招」。
+
+    显式标了 ``source=walk_in`` 即为是；否则当「既无初筛分/初筛记录、也无 AI 面试分/会话」时
+    推导为到店直招（兼容手工录入的历史数据）。
+    """
+    return offline_source == "walk_in" or (
+        screening is None
+        and ai is None
+        and screening_id is None
+        and session_id is None
+    )
+
+
+def resolve_is_complete(
+    *,
+    screening: float | None,
+    ai: float | None,
+    offline: float | None,
+    screening_id: Any = None,
+    session_id: Any = None,
+    offline_source: str = "online",
+    skip_screening: bool = False,
+) -> bool:
+    """判断候选人是否走完「该走的」全链路。
+
+    - **到店直招**（source=walk_in，或既无初筛分/初筛记录、也无 AI 面试分/会话）：没有简历初筛与
+      AI 面试，只要求线下打分完成即算完成 —— 否则他们永远进不了汇总复核提醒；
+    - **线上投递**：初筛（免初筛岗位可跳过）+ AI 面试 + 线下 三者齐备才算完成。
+    """
+    if resolve_is_walk_in(
+        screening=screening,
+        ai=ai,
+        screening_id=screening_id,
+        session_id=session_id,
+        offline_source=offline_source,
+    ):
+        return offline is not None
+    return (screening is not None or skip_screening) and ai is not None and offline is not None
+
+
 def _resolve_stage(
     screening: float | None,
     has_session: bool,
@@ -120,6 +168,7 @@ def build_summary_rows(db: Session, job_id: uuid.UUID) -> list[dict[str, Any]]:
                 "offline_id": None,
                 "offline_status": None,
                 "offline_scheduled_at": None,
+                "offline_source": "online",
                 "interviewer": "",
             }
             basket[cid] = row
@@ -175,6 +224,7 @@ def build_summary_rows(db: Session, job_id: uuid.UUID) -> list[dict[str, Any]]:
         row["offline_id"] = o.id
         row["offline_status"] = o.status
         row["offline_scheduled_at"] = o.scheduled_at.isoformat() if o.scheduled_at else None
+        row["offline_source"] = o.source or "online"
         row["interviewer"] = o.interviewer or ""
         if o.score is not None:
             row["offline_score"] = _round(o.score)
@@ -199,10 +249,22 @@ def build_summary_rows(db: Session, job_id: uuid.UUID) -> list[dict[str, Any]]:
         # 仅导入未初筛（尚未发起面试）单独成阶段，避免误显示为「已初筛」
         if stage == STAGE_SCREENED and row["screening_status"] == "imported":
             stage = STAGE_IMPORTED
-        is_complete = (
-            (row["screening_score"] is not None or skip_screening)
-            and row["ai_interview_score"] is not None
-            and row["offline_score"] is not None
+        # 「完成」判定：到店直招只要求线下打分完成，线上投递要求三段齐备（见 resolve_is_complete）
+        is_walk_in = resolve_is_walk_in(
+            screening=row["screening_score"],
+            ai=row["ai_interview_score"],
+            screening_id=row["screening_id"],
+            session_id=row["session_id"],
+            offline_source=row["offline_source"],
+        )
+        is_complete = resolve_is_complete(
+            screening=row["screening_score"],
+            ai=row["ai_interview_score"],
+            offline=row["offline_score"],
+            screening_id=row["screening_id"],
+            session_id=row["session_id"],
+            offline_source=row["offline_source"],
+            skip_screening=skip_screening,
         )
         verdict = recommendation_from_score(final_score) if final_score is not None else ""
 
@@ -215,6 +277,8 @@ def build_summary_rows(db: Session, job_id: uuid.UUID) -> list[dict[str, Any]]:
                 "final_verdict": verdict,
                 "summary": _build_summary_text(row, final_score, stage),
                 "job_title": job.title if job is not None else "",
+                "offline_source": row["offline_source"],
+                "is_walk_in": is_walk_in,
                 "job_id": str(row.get("job_id") or job_id),
                 "screening_id": str(row["screening_id"]) if row["screening_id"] else None,
                 "session_id": str(row["session_id"]) if row["session_id"] else None,

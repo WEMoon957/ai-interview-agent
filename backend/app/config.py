@@ -3,6 +3,7 @@
 所有 LLM 与数据库配置均从这里读取，业务代码禁止硬编码或绕过本模块。
 """
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -45,6 +46,14 @@ class Settings(BaseSettings):
     summary_weight_screening: float = 0.20  # 简历初筛
     summary_weight_ai: float = 0.40  # AI 面试
     summary_weight_offline: float = 0.40  # 线下复试
+
+    # ── 文件存储 ─────────────────────────────────────────────────
+    # 上传文件落盘根目录（相对后端工作目录）。
+    # 服务器/容器内 api 的工作目录是 /app，且 compose 已把宿主机 backend/ 绑定挂载进来，
+    # 因此写到 /app/uploads 即持久化到 /home/ubuntu/hragent/backend/uploads。
+    upload_dir: str = "uploads"
+    # 单个面试录音大小上限（MB），超出直接拒绝（避免大文件撑爆内存/磁盘）
+    max_audio_mb: int = 50
 
     # ── 对外链接 ─────────────────────────────────────────────────
     # 候选人面试页的对外基址（卡片/待办里的绝对链接由它拼出，如 http://host:3000/i/{token}）。
@@ -140,6 +149,16 @@ class Settings(BaseSettings):
     def public_base_url_normalized(self) -> str:
         """对外基址（去掉尾部斜杠，便于直接拼 /i/{token}）。"""
         return (self.public_base_url or "").rstrip("/")
+
+    @property
+    def upload_root(self) -> Path:
+        """上传文件落盘根目录的绝对路径（相对路径按当前工作目录解析）。"""
+        return Path(self.upload_dir).expanduser().resolve()
+
+    @property
+    def max_audio_bytes(self) -> int:
+        """面试录音大小上限（字节）。"""
+        return max(1, int(self.max_audio_mb)) * 1024 * 1024
 
     @property
     def feishu_notify_ready(self) -> bool:

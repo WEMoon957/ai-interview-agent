@@ -62,6 +62,11 @@
               <el-option label="爽约" value="no_show" />
               <el-option label="已取消" value="cancelled" />
             </el-select>
+            <el-select v-model="source" placeholder="全部来源" clearable style="width: 140px" @change="load">
+              <el-option label="线上投递" value="online" />
+              <el-option label="到店直招" value="walk_in" />
+            </el-select>
+            <el-button type="warning" @click="openWalkIn">到店直招</el-button>
             <el-button type="primary" @click="openCreate">新增约面</el-button>
           </div>
         </div>
@@ -73,6 +78,34 @@
         </el-table-column>
         <el-table-column label="岗位" min-width="130">
           <template #default="{ row }">{{ row.job_title || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="来源" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="row.source === 'walk_in'" type="warning" size="small">到店直招</el-tag>
+            <el-tag v-else type="info" size="small" effect="plain">线上投递</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="来源渠道" min-width="110">
+          <template #default="{ row }">
+            <span v-if="row.source_channel">{{ row.source_channel }}</span>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="面试录音" min-width="200">
+          <template #default="{ row }">
+            <template v-if="row.has_audio">
+              <audio :src="audioUrl(row.id)" controls preload="none" style="height: 32px; width: 150px" />
+              <el-button size="small" text type="primary" @click="downloadAudio(row)">
+                下载
+              </el-button>
+            </template>
+            <template v-else>
+              <span class="muted">未上传</span>
+              <el-button size="small" text type="primary" @click="openAudioUpload(row)">
+                上传
+              </el-button>
+            </template>
+          </template>
         </el-table-column>
         <el-table-column label="约面时间" min-width="160">
           <template #default="{ row }">{{ fmt(row.scheduled_at) }}</template>
@@ -200,6 +233,12 @@
       <el-form label-width="100px">
         <el-form-item label="候选人">
           <span>{{ scoreTarget?.candidate_name }}</span>
+          <el-tag v-if="scoreTarget?.source === 'walk_in'" type="warning" size="small" style="margin-left: 8px">
+            到店直招
+          </el-tag>
+        </el-form-item>
+        <el-form-item v-if="scoreTarget?.has_audio" label="面试录音">
+          <audio :src="audioUrl(scoreTarget.id)" controls preload="none" style="width: 100%; height: 36px" />
         </el-form-item>
         <el-form-item label="总分" required>
           <el-input-number v-model="scoreForm.score" :min="0" :max="100" :precision="1" />
@@ -261,6 +300,108 @@
         <el-button type="primary" :loading="saving" @click="submitScheduleFor">创建约面</el-button>
       </template>
     </el-dialog>
+
+    <!-- 到店直招：店长现场面试，直接建档（无需简历 / 初筛 / AI 面试） -->
+    <el-dialog v-model="walkInVisible" title="到店直招 · 现场面试建档" width="620px">
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 14px"
+        title="用于候选人直接上门找店长面试的情况：不做简历初筛、不发 AI 面试链接，建档后直接打分。"
+      />
+      <el-form :model="walkInForm" label-width="100px">
+        <el-form-item label="应聘岗位" required>
+          <el-select v-model="walkInForm.jobId" placeholder="选择岗位" style="width: 100%" filterable>
+            <el-option v-for="j in jobs" :key="j.id" :label="j.title" :value="j.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="姓名" required>
+          <el-input v-model="walkInForm.name" placeholder="候选人姓名" style="width: 220px" />
+        </el-form-item>
+        <el-form-item label="手机号" required>
+          <el-input v-model="walkInForm.phone" placeholder="11 位手机号" style="width: 220px" />
+        </el-form-item>
+        <el-form-item label="来源渠道" required>
+          <el-select
+            v-model="walkInForm.sourceChannel"
+            placeholder="选择或输入来源"
+            filterable
+            allow-create
+            default-first-option
+            style="width: 260px"
+          >
+            <el-option v-for="c in SOURCE_CHANNELS" :key="c" :label="c" :value="c" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="面试时间">
+          <el-date-picker
+            v-model="walkInForm.scheduledAt"
+            type="datetime"
+            placeholder="默认当前时间"
+            style="width: 260px"
+          />
+        </el-form-item>
+        <el-form-item label="面试门店">
+          <el-input v-model="walkInForm.location" placeholder="如：昆明总店" style="width: 260px" />
+        </el-form-item>
+        <el-form-item label="面试店长">
+          <el-input v-model="walkInForm.interviewer" placeholder="面试官姓名" style="width: 220px" />
+          <el-radio-group v-model="walkInForm.interviewerRole" style="margin-left: 12px">
+            <el-radio label="store_manager">店长</el-radio>
+            <el-radio label="hr">HR</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="面试录音">
+          <el-upload
+            :auto-upload="false"
+            :limit="1"
+            :file-list="walkInFiles"
+            :on-change="onWalkInFileChange"
+            :on-remove="() => (walkInFiles = [])"
+          >
+            <el-button>选择录音文件</el-button>
+            <template #tip>
+              <div class="tip">整场面试一段录音，mp3 / m4a / mp4 / wav 等，单个不超过 50MB（可稍后补传）</div>
+            </template>
+          </el-upload>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="walkInVisible = false">取消</el-button>
+        <el-button :loading="saving" @click="submitWalkIn(false)">仅建档</el-button>
+        <el-button type="primary" :loading="saving" @click="submitWalkIn(true)">
+          建档并打分
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 给已有记录补传 / 替换录音 -->
+    <el-dialog v-model="audioUploadVisible" title="上传面试录音" width="520px">
+      <el-form label-width="90px">
+        <el-form-item label="候选人">
+          <span>{{ audioTarget?.candidate_name }}（{{ audioTarget?.job_title }}）</span>
+        </el-form-item>
+        <el-form-item label="录音文件" required>
+          <el-upload
+            :auto-upload="false"
+            :limit="1"
+            :file-list="audioFiles"
+            :on-change="(f) => (audioFiles = [f])"
+            :on-remove="() => (audioFiles = [])"
+          >
+            <el-button>选择录音文件</el-button>
+            <template #tip>
+              <div class="tip">mp3 / m4a / mp4 / wav 等，单个不超过 50MB；上传新文件将替换旧录音</div>
+            </template>
+          </el-upload>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="audioUploadVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitAudioUpload">上传</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -272,18 +413,44 @@ import {
   listScreenings,
   listOfflineInterviews,
   createOfflineInterview,
+  createWalkInInterview,
+  uploadOfflineAudio,
+  offlineAudioUrl,
   updateOfflineInterview,
   scoreOfflineInterview,
   deleteOfflineInterview,
   getSummary,
 } from '../../api'
 
+// 来源渠道候选（可自由输入）
+const SOURCE_CHANNELS = ['门店海报', '员工介绍', '商场客流', '自然到访', '朋友圈/社群', '老员工返聘', '其他']
+
 const jobs = ref([])
 const jobId = ref('')
 const status = ref('')
+const source = ref('')
 const rows = ref([])
 const loading = ref(false)
 const saving = ref(false)
+
+// 到店直招
+const walkInVisible = ref(false)
+const walkInFiles = ref([])
+const walkInForm = ref({
+  jobId: '',
+  name: '',
+  phone: '',
+  sourceChannel: '',
+  scheduledAt: null,
+  location: '',
+  interviewer: '',
+  interviewerRole: 'store_manager',
+})
+
+// 补传录音
+const audioUploadVisible = ref(false)
+const audioFiles = ref([])
+const audioTarget = ref(null)
 
 // 待 HR / 店长处理（AI 面试已出结果、尚未打分）
 const pending = ref([])
@@ -352,11 +519,100 @@ async function load() {
     const listParams = {}
     if (jobId.value) listParams.job_id = jobId.value
     if (status.value) listParams.status = status.value
+    if (source.value) listParams.source = source.value
     rows.value = await listOfflineInterviews(listParams)
   } finally {
     loading.value = false
   }
   await loadPending()
+}
+
+// ── 到店直招 ────────────────────────────────────────
+
+function openWalkIn() {
+  walkInForm.value = {
+    jobId: jobId.value || '',
+    name: '',
+    phone: '',
+    sourceChannel: '',
+    scheduledAt: new Date(),
+    location: '',
+    interviewer: '',
+    interviewerRole: 'store_manager',
+  }
+  walkInFiles.value = []
+  walkInVisible.value = true
+}
+
+function onWalkInFileChange(file) {
+  walkInFiles.value = [file] // 整场一段：只保留最后一个
+}
+
+function audioUrl(id) {
+  return offlineAudioUrl(id)
+}
+
+function downloadAudio(row) {
+  window.open(offlineAudioUrl(row.id, true), '_blank')
+}
+
+async function submitWalkIn(thenScore) {
+  const f = walkInForm.value
+  if (!f.jobId) return ElMessage.warning('请选择应聘岗位')
+  if (!f.name.trim()) return ElMessage.warning('请填写候选人姓名')
+  if (!f.phone.trim()) return ElMessage.warning('请填写手机号')
+  if (!f.sourceChannel) return ElMessage.warning('请选择来源渠道')
+
+  const fd = new FormData()
+  fd.append('job_id', f.jobId)
+  fd.append('name', f.name.trim())
+  fd.append('phone', f.phone.trim())
+  fd.append('source_channel', f.sourceChannel)
+  fd.append('interviewer', f.interviewer || '')
+  fd.append('interviewer_role', f.interviewerRole || '')
+  fd.append('location', f.location || '')
+  if (f.scheduledAt) fd.append('scheduled_at', new Date(f.scheduledAt).toISOString())
+  const raw = walkInFiles.value[0]?.raw
+  if (raw) fd.append('audio', raw)
+
+  saving.value = true
+  try {
+    const res = await createWalkInInterview(fd)
+    walkInVisible.value = false
+    if (res.audio_error) {
+      ElMessage.warning(`已建档，但录音上传失败：${res.audio_error}`)
+    } else {
+      ElMessage.success('到店直招已建档')
+    }
+    await load()
+    if (thenScore) openScore(res.record)
+  } finally {
+    saving.value = false
+  }
+}
+
+// ── 补传 / 替换录音 ─────────────────────────────────
+
+function openAudioUpload(row) {
+  audioTarget.value = row
+  audioFiles.value = []
+  audioUploadVisible.value = true
+}
+
+async function submitAudioUpload() {
+  const raw = audioFiles.value[0]?.raw
+  if (!raw) return ElMessage.warning('请选择录音文件')
+  const fd = new FormData()
+  fd.append('audio', raw)
+  saving.value = true
+  try {
+    await uploadOfflineAudio(audioTarget.value.id, fd)
+    ElMessage.success('录音已上传')
+    audioUploadVisible.value = false
+    await load()
+  } finally {
+    saving.value = false
+  }
 }
 
 async function loadPending() {

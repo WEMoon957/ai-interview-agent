@@ -37,6 +37,7 @@ from app.config import get_settings  # noqa: E402
 from app.services.feishu_notify import (  # noqa: E402
     build_notification_text,
     build_screening_card,
+    build_summary_task,
     build_screening_task,
     build_summary_card,
     card_to_markdown,
@@ -129,7 +130,7 @@ def main() -> int:
     parser.add_argument(
         "--with-task",
         action="store_true",
-        help="（仅 screening）同时创建飞书待办；配合 --open-id 可只给自己建",
+        help="同时创建对应的飞书待办（screening / summary 均支持）；配合 --open-id 可只给自己建",
     )
     args = parser.parse_args()
 
@@ -169,6 +170,16 @@ def main() -> int:
             base_url=settings.public_base_url_normalized,
             max_items=settings.feishu_notify_max_items,
         )
+    elif args.kind == "summary":
+        task_title, task_desc = build_summary_task(
+            job_title="（自检岗位）后厨帮厨",
+            offer_items=[SAMPLE_SUMMARY_ITEMS[0]],
+            review_items=[SAMPLE_SUMMARY_ITEMS[1]],
+            snapshot_at="2026-01-01 10:00",
+            max_items=settings.feishu_notify_max_items,
+        )
+
+    if task_title:
         print("\n=== 对应的飞书待办（--with-task 时创建）===")
         print(f"标题：{task_title}")
         print(f"截止：+{settings.feishu_task_due_days} 天")

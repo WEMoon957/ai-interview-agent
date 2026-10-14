@@ -33,6 +33,13 @@ def _parse_uuid(value: str, label: str) -> uuid.UUID:
 
 def _summary_out(row: RecruitmentSummary) -> dict:
     """汇总记录序列化。"""
+    detail = row.detail or {}
+    # 来源：优先取落库时的标记；老快照没有该字段时按「无初筛无AI但有线下分」推导为到店直招
+    is_walk_in = bool(detail.get("is_walk_in")) or (
+        row.screening_score is None
+        and row.ai_interview_score is None
+        and row.offline_score is not None
+    )
     return {
         "id": str(row.id),
         "job_id": str(row.job_id),
@@ -46,6 +53,8 @@ def _summary_out(row: RecruitmentSummary) -> dict:
         "stage": row.stage,
         "final_verdict": row.final_verdict,
         "is_complete": row.is_complete,
+        "is_walk_in": is_walk_in,
+        "offline_source": detail.get("offline_source") or ("walk_in" if is_walk_in else "online"),
         "summary": row.summary,
         "detail": row.detail,
         "snapshot_at": row.snapshot_at.isoformat() if row.snapshot_at else None,
@@ -129,6 +138,8 @@ def rebuild_summary(
                 "stage": r["stage"],
                 "screening_status": r["screening_status"],
                 "session_status": r["session_status"],
+                "offline_source": r.get("offline_source", "online"),
+                "is_walk_in": r.get("is_walk_in", False),
             }
             if existing is None:
                 existing = RecruitmentSummary(

@@ -24,6 +24,7 @@ from app.db.models import (
     ResumeScreening,
     SessionReport,
 )
+from app.services.audio_storage import delete_audio
 
 
 def purge_candidate(db: Session, candidate_id: uuid.UUID) -> None:
@@ -33,6 +34,14 @@ def purge_candidate(db: Session, candidate_id: uuid.UUID) -> None:
     （与既有「删候选人即清空其数据」的口径一致）。
     """
     # 1) 先删引用 session 的两张表，避免 FK 违约
+    #    线下复试可能带面试录音文件，先取出路径，删库后再清理磁盘
+    audio_paths = [
+        row[0]
+        for row in db.query(OfflineInterview.audio_path).filter(
+            OfflineInterview.candidate_id == candidate_id,
+            OfflineInterview.audio_path.isnot(None),
+        )
+    ]
     db.query(OfflineInterview).filter(
         OfflineInterview.candidate_id == candidate_id
     ).delete(synchronize_session=False)
@@ -64,6 +73,10 @@ def purge_candidate(db: Session, candidate_id: uuid.UUID) -> None:
     ).delete(synchronize_session=False)
     db.query(Resume).filter(Resume.candidate_id == candidate_id).delete(synchronize_session=False)
     db.query(Candidate).filter(Candidate.id == candidate_id).delete(synchronize_session=False)
+
+    # 4) 清理已上传的面试录音文件（库删干净后再动磁盘，失败不影响数据一致性）
+    for rel_path in audio_paths:
+        delete_audio(rel_path)
 
 
 def candidate_is_orphan(db: Session, candidate_id: uuid.UUID) -> bool:
