@@ -205,6 +205,18 @@ class OfflineScoreSubmit(BaseModel):
     decision: str = Field(default="", description="录用结论：pass / hold / reject")
 
 
+class MinutesBind(BaseModel):
+    """手动绑定飞书妙记（录音节点降级通道）。"""
+
+    minutes_url: str = Field(description="妙记链接或 token（形如 .../minutes/obcnxxx）")
+
+
+class AdoptAiScore(BaseModel):
+    """采纳 AI 参考分回填为人工打分。"""
+
+    decision: str = Field(default="", description="录用结论：pass / hold / reject")
+
+
 class SummaryRebuild(BaseModel):
     """生成汇总快照请求体。"""
 

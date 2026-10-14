@@ -53,6 +53,27 @@ class OfflineInterview(TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # ── 飞书妙记录音转写（录音节点：店长开妙记录音 → 后端轮询拉逐字稿 → AI 参考分）────
+    # 到店直招建档生成的 6 位短码，店长把它填成妙记标题，后端据此匹配关联
+    walk_in_code: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, unique=True, index=True
+    )
+    # 店长飞书 open_id（通讯录解析，用于轮询按所有者过滤；解析不到则走手动绑定）
+    interviewer_open_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 匹配到的妙记 token（/minutes/<token> 末段）
+    minutes_token: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    minutes_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    minutes_title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # 逐字稿全文与转写状态：none → pending → matched → transcribed；失败置 failed
+    transcript_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transcript_status: Mapped[str] = mapped_column(String(32), nullable=False, default="none")
+    transcript_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # AI 参考分（整场逐字稿整体评分，与人工 score 并存，不覆盖）
+    ai_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_dim_scores: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    ai_comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    ai_scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # 打分结果（人工）
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 维度得分：[{"key","name","score","max_score"}]

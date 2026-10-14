@@ -91,20 +91,36 @@
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="面试录音" min-width="200">
+        <el-table-column label="妙记" min-width="140">
           <template #default="{ row }">
-            <template v-if="row.has_audio">
-              <audio :src="audioUrl(row.id)" controls preload="none" style="height: 32px; width: 150px" />
-              <el-button size="small" text type="primary" @click="downloadAudio(row)">
-                下载
-              </el-button>
+            <el-link v-if="row.minutes_url" :href="row.minutes_url" target="_blank" type="primary">
+              打开妙记
+            </el-link>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="妙记转写" width="160">
+          <template #default="{ row }">
+            <el-tag :type="transcriptStatusType(row.transcript_status)" size="small" effect="plain">
+              {{ transcriptStatusText(row.transcript_status) }}
+            </el-tag>
+            <el-button
+              v-if="['none', 'pending', 'failed'].includes(row.transcript_status)"
+              size="small"
+              text
+              type="primary"
+              @click="openBindMinutes(row)"
+            >
+              绑定
+            </el-button>
+          </template>
+        </el-table-column>
+        <el-table-column label="AI 参考分" width="120">
+          <template #default="{ row }">
+            <template v-if="row.ai_score != null">
+              <span class="score" :class="scoreClass(row.ai_score)">{{ row.ai_score.toFixed(1) }}</span>
             </template>
-            <template v-else>
-              <span class="muted">未上传</span>
-              <el-button size="small" text type="primary" @click="openAudioUpload(row)">
-                上传
-              </el-button>
-            </template>
+            <span v-else class="muted">—</span>
           </template>
         </el-table-column>
         <el-table-column label="约面时间" min-width="160">
@@ -237,8 +253,14 @@
             到店直招
           </el-tag>
         </el-form-item>
-        <el-form-item v-if="scoreTarget?.has_audio" label="面试录音">
-          <audio :src="audioUrl(scoreTarget.id)" controls preload="none" style="width: 100%; height: 36px" />
+        <el-form-item v-if="scoreTarget?.ai_score != null" label="AI 参考分">
+          <span class="score" :class="scoreClass(scoreTarget.ai_score)" style="font-size: 16px">
+            {{ scoreTarget.ai_score.toFixed(1) }}
+          </span>
+          <el-button size="small" type="primary" text @click="fillAiScore">采纳 AI 分</el-button>
+          <div v-if="scoreTarget.ai_comment" class="muted" style="font-size: 12px; margin-top: 4px">
+            {{ scoreTarget.ai_comment }}
+          </div>
         </el-form-item>
         <el-form-item label="总分" required>
           <el-input-number v-model="scoreForm.score" :min="0" :max="100" :precision="1" />
@@ -352,19 +374,10 @@
             <el-radio label="hr">HR</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="面试录音">
-          <el-upload
-            :auto-upload="false"
-            :limit="1"
-            :file-list="walkInFiles"
-            :on-change="onWalkInFileChange"
-            :on-remove="() => (walkInFiles = [])"
-          >
-            <el-button>选择录音文件</el-button>
-            <template #tip>
-              <div class="tip">整场面试一段录音，mp3 / m4a / mp4 / wav 等，单个不超过 50MB（可稍后补传）</div>
-            </template>
-          </el-upload>
+        <el-form-item label="录音方式">
+          <div class="tip">
+            录音走飞书妙记：建档后系统会给出短码，让店长在飞书妙记录音、把标题填成短码，录音保留在飞书，服务器不保存音频。
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -376,30 +389,29 @@
       </template>
     </el-dialog>
 
-    <!-- 给已有记录补传 / 替换录音 -->
-    <el-dialog v-model="audioUploadVisible" title="上传面试录音" width="520px">
+    <!-- 绑定飞书妙记（录音节点降级通道）：店长粘贴妙记链接，立即拉逐字稿 + 评分 -->
+    <el-dialog v-model="bindVisible" title="绑定飞书妙记" width="560px">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 14px"
+        title="店长在飞书妙记录完音后，把妙记链接粘贴到这里，系统会立即拉取逐字稿并生成 AI 参考分。"
+      />
       <el-form label-width="90px">
         <el-form-item label="候选人">
-          <span>{{ audioTarget?.candidate_name }}（{{ audioTarget?.job_title }}）</span>
+          <span>{{ bindTarget?.candidate_name }}（{{ bindTarget?.job_title }}）</span>
         </el-form-item>
-        <el-form-item label="录音文件" required>
-          <el-upload
-            :auto-upload="false"
-            :limit="1"
-            :file-list="audioFiles"
-            :on-change="(f) => (audioFiles = [f])"
-            :on-remove="() => (audioFiles = [])"
-          >
-            <el-button>选择录音文件</el-button>
-            <template #tip>
-              <div class="tip">mp3 / m4a / mp4 / wav 等，单个不超过 50MB；上传新文件将替换旧录音</div>
-            </template>
-          </el-upload>
+        <el-form-item label="妙记链接" required>
+          <el-input
+            v-model="bindForm.minutesUrl"
+            placeholder="粘贴妙记链接，如 https://xxx.feishu.cn/minutes/obcnxxx"
+          />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="audioUploadVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="submitAudioUpload">上传</el-button>
+        <el-button @click="bindVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitBind">绑定并转写</el-button>
       </template>
     </el-dialog>
   </div>
@@ -414,12 +426,11 @@ import {
   listOfflineInterviews,
   createOfflineInterview,
   createWalkInInterview,
-  uploadOfflineAudio,
-  offlineAudioUrl,
   updateOfflineInterview,
   scoreOfflineInterview,
   deleteOfflineInterview,
   getSummary,
+  bindMinutes,
 } from '../../api'
 
 // 来源渠道候选（可自由输入）
@@ -435,7 +446,6 @@ const saving = ref(false)
 
 // 到店直招
 const walkInVisible = ref(false)
-const walkInFiles = ref([])
 const walkInForm = ref({
   jobId: '',
   name: '',
@@ -447,10 +457,10 @@ const walkInForm = ref({
   interviewerRole: 'store_manager',
 })
 
-// 补传录音
-const audioUploadVisible = ref(false)
-const audioFiles = ref([])
-const audioTarget = ref(null)
+// 绑定飞书妙记（录音节点）
+const bindVisible = ref(false)
+const bindTarget = ref(null)
+const bindForm = ref({ minutesUrl: '' })
 
 // 待 HR / 店长处理（AI 面试已出结果、尚未打分）
 const pending = ref([])
@@ -511,6 +521,24 @@ function scoreClass(s) {
   if (s >= 65) return 's-mid'
   return 's-low'
 }
+function transcriptStatusText(s) {
+  return {
+    none: '未开启',
+    pending: '待录音',
+    matched: '转写中',
+    transcribed: '已转写',
+    failed: '转写失败',
+  }[s] || s || '未开启'
+}
+function transcriptStatusType(s) {
+  return {
+    none: 'info',
+    pending: 'warning',
+    matched: 'warning',
+    transcribed: 'success',
+    failed: 'danger',
+  }[s] || 'info'
+}
 
 async function load() {
   loading.value = true
@@ -540,20 +568,7 @@ function openWalkIn() {
     interviewer: '',
     interviewerRole: 'store_manager',
   }
-  walkInFiles.value = []
   walkInVisible.value = true
-}
-
-function onWalkInFileChange(file) {
-  walkInFiles.value = [file] // 整场一段：只保留最后一个
-}
-
-function audioUrl(id) {
-  return offlineAudioUrl(id)
-}
-
-function downloadAudio(row) {
-  window.open(offlineAudioUrl(row.id, true), '_blank')
 }
 
 async function submitWalkIn(thenScore) {
@@ -572,44 +587,27 @@ async function submitWalkIn(thenScore) {
   fd.append('interviewer_role', f.interviewerRole || '')
   fd.append('location', f.location || '')
   if (f.scheduledAt) fd.append('scheduled_at', new Date(f.scheduledAt).toISOString())
-  const raw = walkInFiles.value[0]?.raw
-  if (raw) fd.append('audio', raw)
 
   saving.value = true
   try {
     const res = await createWalkInInterview(fd)
     walkInVisible.value = false
-    if (res.audio_error) {
-      ElMessage.warning(`已建档，但录音上传失败：${res.audio_error}`)
-    } else {
-      ElMessage.success('到店直招已建档')
+    ElMessage.success('到店直招已建档')
+    await load()
+    const code = res.record?.walk_in_code
+    if (code) {
+      try {
+        await navigator.clipboard.writeText(code)
+      } catch {
+        /* 剪贴板不可用时忽略 */
+      }
+      ElMessageBox.alert(
+        `录音短码：<b>${code}</b>（已复制到剪贴板）<br><br>请让店长打开飞书妙记开始录音，并把妙记<b>标题填成这个短码</b>；录完后系统会自动拉取逐字稿并生成 AI 参考分。`,
+        '飞书妙记录音',
+        { confirmButtonText: '知道了', type: 'info', dangerouslyUseHTMLString: true, showClose: false }
+      )
     }
-    await load()
     if (thenScore) openScore(res.record)
-  } finally {
-    saving.value = false
-  }
-}
-
-// ── 补传 / 替换录音 ─────────────────────────────────
-
-function openAudioUpload(row) {
-  audioTarget.value = row
-  audioFiles.value = []
-  audioUploadVisible.value = true
-}
-
-async function submitAudioUpload() {
-  const raw = audioFiles.value[0]?.raw
-  if (!raw) return ElMessage.warning('请选择录音文件')
-  const fd = new FormData()
-  fd.append('audio', raw)
-  saving.value = true
-  try {
-    await uploadOfflineAudio(audioTarget.value.id, fd)
-    ElMessage.success('录音已上传')
-    audioUploadVisible.value = false
-    await load()
   } finally {
     saving.value = false
   }
@@ -767,6 +765,46 @@ async function submitScore() {
   } finally {
     saving.value = false
   }
+}
+
+// ── 飞书妙记录音节点：绑定 / 采纳 ─────────────────────
+
+function openBindMinutes(row) {
+  bindTarget.value = row
+  bindForm.value = { minutesUrl: row.minutes_url || '' }
+  bindVisible.value = true
+}
+
+async function submitBind() {
+  const url = (bindForm.value.minutesUrl || '').trim()
+  if (!url) return ElMessage.warning('请粘贴妙记链接')
+  saving.value = true
+  try {
+    const res = await bindMinutes(bindTarget.value.id, { minutes_url: url })
+    bindVisible.value = false
+    if (res.transcribed && res.record.ai_score != null) {
+      ElMessage.success(`转写完成，AI 参考分 ${res.record.ai_score.toFixed(1)}`)
+    } else if (res.transcribed) {
+      ElMessage.success('转写完成（AI 评分暂不可用）')
+    } else {
+      ElMessage.warning('已绑定，但拉取逐字稿失败，可稍后重试')
+    }
+    await load()
+  } finally {
+    saving.value = false
+  }
+}
+
+/** 在打分弹窗内一键采纳 AI 参考分（回填表单，店长确认后提交） */
+function fillAiScore() {
+  const t = scoreTarget.value
+  if (t?.ai_score == null) return
+  scoreForm.value.score = t.ai_score
+  if (t.ai_dim_scores?.length) {
+    scoreForm.value.dimScores = JSON.parse(JSON.stringify(t.ai_dim_scores))
+  }
+  if (t.ai_comment) scoreForm.value.comment = t.ai_comment
+  ElMessage.success('已填入 AI 参考分，确认录用结论后提交即可')
 }
 
 async function handleDelete(row) {

@@ -4,7 +4,11 @@
 1. **线上投递**：AI 面试达标后，由 HR / 店长约线下复试、录入打分（source=online）；
 2. **到店直招**：候选人直接上门找店长面试，无简历、不走初筛与 AI 面试 ——
    店长用「到店直招」一次创建候选人（姓名 + 手机号 + 来源渠道）与面试记录，
-   并可上传**整场面试录音**存档，再录入打分（source=walk_in）。
+   再录入打分（source=walk_in）。
+
+录音说明：**录音文件不落服务器/本地**，统一走飞书妙记（店长开妙记录音，
+后端只保存妙记链接与逐字稿文本，音频保留在飞书侧）。历史遗留的本地录音
+（``audio_*`` 字段）仅保留只读回放，不再提供上传入口。
 
 数据落库 offline_interviews，并参与招聘汇总。
 """
@@ -14,12 +18,19 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, Form, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, ok
-from app.api.schemas import OfflineInterviewCreate, OfflineInterviewUpdate, OfflineScoreSubmit
+from app.api.schemas import (
+    AdoptAiScore,
+    MinutesBind,
+    OfflineInterviewCreate,
+    OfflineInterviewUpdate,
+    OfflineScoreSubmit,
+)
+from app.config import get_settings
 from app.db.models import (
     Candidate,
     InterviewSession,
@@ -29,7 +40,9 @@ from app.db.models import (
     ResumeScreening,
 )
 from app.exceptions import BizError
-from app.services.audio_storage import audio_abs_path, delete_audio, save_audio_upload
+from app.services.audio_storage import audio_abs_path, delete_audio
+from app.services.feishu_minutes import extract_minute_token, generate_walk_in_code
+from app.services.minutes_poller import transcribe_and_score
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +62,20 @@ def _parse_uuid(value: str, label: str) -> uuid.UUID:
         return uuid.UUID(value)
     except (ValueError, TypeError, AttributeError):
         raise BizError(422, f"{label}格式无效", http_status=422)
+
+
+def _gen_unique_walk_in_code(db: Session) -> str:
+    """生成全局唯一的 6 位数字短码（冲突重试）。"""
+    for _ in range(20):
+        code = generate_walk_in_code()
+        exists = (
+            db.query(OfflineInterview)
+            .filter(OfflineInterview.walk_in_code == code)
+            .first()
+        )
+        if exists is None:
+            return code
+    raise BizError(500, "生成短码失败，请重试", http_status=500)
 
 
 def _parse_dt(value: str | None, label: str) -> datetime | None:
@@ -95,6 +122,17 @@ def _offline_out(o: OfflineInterview) -> dict:
             f"/admin/offline-interviews/{o.id}/audio" if o.audio_path else None
         ),
         "audio_uploaded_at": o.audio_uploaded_at.isoformat() if o.audio_uploaded_at else None,
+        # 飞书妙记录音转写（录音节点）
+        "walk_in_code": o.walk_in_code or "",
+        "transcript_status": o.transcript_status,
+        "minutes_token": o.minutes_token or "",
+        "minutes_url": o.minutes_url or "",
+        "minutes_title": o.minutes_title or "",
+        "transcript_at": o.transcript_at.isoformat() if o.transcript_at else None,
+        "ai_score": o.ai_score,
+        "ai_dim_scores": o.ai_dim_scores,
+        "ai_comment": o.ai_comment or "",
+        "ai_scored_at": o.ai_scored_at.isoformat() if o.ai_scored_at else None,
         "created_at": o.created_at.isoformat() if o.created_at else None,
     }
 
@@ -164,15 +202,15 @@ async def create_walk_in_interview(
     interviewer_role: str = Form("", description="面试官角色：hr / store_manager"),
     scheduled_at: str = Form("", description="面试时间（ISO8601，可空）"),
     location: str = Form("", description="面试门店/地点"),
-    audio: UploadFile | None = File(None, description="整场面试录音（可选，格式见白名单）"),
     db: Session = Depends(get_db),
 ):
-    """**到店直招**：一次创建候选人 + 线下复试记录（无初筛、无 AI 面试），可选同时上传面试录音。
+    """**到店直招**：一次创建候选人 + 线下复试记录（无初筛、无 AI 面试）。
 
     - 姓名 / 手机号 / 来源渠道 **必填**；
     - 同「姓名 + 手机号」的候选人已存在时**复用**，不重复建人；
     - 同一候选人在同一岗位已有面试记录时返回 409，避免重复提交；
-    - 录音上传失败不影响记录创建（可稍后通过 /audio 接口补传）。
+    - 录音**不落服务器/本地**：开启妙记开关时生成短码，店长在飞书妙记录音并把标题填成短码，
+      后端轮询自动拉取逐字稿生成 AI 参考分。
     """
     jid = _parse_uuid(job_id, "job_id")
     job = db.get(JobPosting, jid)
@@ -225,6 +263,13 @@ async def create_walk_in_interview(
             http_status=409,
         )
 
+    # 妙记录音节点：开关开启时生成短码，店长把妙记标题填成它，后端轮询据此关联
+    settings = get_settings()
+    walk_in_code = None
+    interviewer_open_id = settings.feishu_minutes_default_owner_open_id or None
+    if settings.feishu_minutes_enabled:
+        walk_in_code = _gen_unique_walk_in_code(db)
+
     row = OfflineInterview(
         screening_id=None,
         session_id=None,
@@ -236,57 +281,15 @@ async def create_walk_in_interview(
         interviewer=interviewer or "",
         interviewer_role=interviewer_role or "",
         status="scheduled",
+        walk_in_code=walk_in_code,
+        interviewer_open_id=interviewer_open_id,
+        transcript_status="pending" if walk_in_code else "none",
     )
     db.add(row)
     db.commit()
     db.refresh(row)
 
-    # 录音为可选：失败只记录日志，不阻断建档（店长可稍后补传）
-    if audio is not None and (audio.filename or ""):
-        try:
-            saved = await save_audio_upload(audio)
-            row.audio_path = saved["rel_path"]
-            row.audio_name = saved["name"]
-            row.audio_size = saved["size"]
-            row.audio_uploaded_at = datetime.now(timezone.utc)
-            db.commit()
-            db.refresh(row)
-        except BizError as exc:
-            logger.warning("到店直招录音上传被拒：%s", exc.message)
-            return ok({"record": _offline_out(row), "audio_error": exc.message})
-        except Exception:  # noqa: BLE001 - 录音失败不影响建档
-            logger.exception("到店直招录音保存异常")
-            return ok({"record": _offline_out(row), "audio_error": "录音保存失败，请稍后重试上传"})
-
-    return ok({"record": _offline_out(row), "audio_error": ""})
-
-
-@router.post("/offline-interviews/{offline_id}/audio")
-async def upload_offline_audio(
-    offline_id: str,
-    audio: UploadFile = File(..., description="整场面试录音"),
-    db: Session = Depends(get_db),
-):
-    """上传 / 替换某场线下复试的面试录音（整场一段）。"""
-    oid = _parse_uuid(offline_id, "offline_id")
-    row = db.get(OfflineInterview, oid)
-    if row is None:
-        raise BizError(404, "线下复试记录不存在", http_status=404)
-
-    saved = await save_audio_upload(audio)
-    old_path = row.audio_path
-    row.audio_path = saved["rel_path"]
-    row.audio_name = saved["name"]
-    row.audio_size = saved["size"]
-    row.audio_uploaded_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(row)
-
-    # 替换成功后再清掉旧文件
-    if old_path and old_path != row.audio_path:
-        delete_audio(old_path)
-
-    return ok(_offline_out(row))
+    return ok({"record": _offline_out(row)})
 
 
 @router.get("/offline-interviews/{offline_id}/audio")
@@ -393,6 +396,81 @@ def score_offline_interview(
     db.commit()
     db.refresh(row)
     return ok(_offline_out(row))
+
+
+@router.post("/offline-interviews/{offline_id}/bind-minutes")
+def bind_minutes(offline_id: str, payload: MinutesBind, db: Session = Depends(get_db)):
+    """手动绑定飞书妙记（录音节点降级通道）：店长粘贴妙记链接/token，立即拉逐字稿并评分。
+
+    正常路径由后台轮询自动匹配，本接口用于：轮询未命中时手动补救、或 failed 记录重试。
+    """
+    oid = _parse_uuid(offline_id, "offline_id")
+    row = db.get(OfflineInterview, oid)
+    if row is None:
+        raise BizError(404, "线下复试记录不存在", http_status=404)
+
+    token = extract_minute_token(payload.minutes_url)
+    if not token:
+        raise BizError(422, "无法识别妙记链接/token，请粘贴完整妙记链接", http_status=422)
+
+    row.minutes_token = token
+    row.minutes_url = payload.minutes_url.strip()
+    row.transcript_status = "matched"
+    db.commit()
+
+    transcribed = transcribe_and_score(db, row)
+    db.refresh(row)
+    return ok(
+        {
+            "record": _offline_out(row),
+            "transcript_text": row.transcript_text or "",
+            "transcribed": transcribed,
+        }
+    )
+
+
+@router.post("/offline-interviews/{offline_id}/adopt-ai-score")
+def adopt_ai_score(offline_id: str, payload: AdoptAiScore, db: Session = Depends(get_db)):
+    """采纳 AI 参考分：一键回填到人工打分字段（店长确认后即完成打分）。"""
+    oid = _parse_uuid(offline_id, "offline_id")
+    row = db.get(OfflineInterview, oid)
+    if row is None:
+        raise BizError(404, "线下复试记录不存在", http_status=404)
+    if row.ai_score is None:
+        raise BizError(409, "暂无 AI 参考分可采纳", http_status=409)
+    if payload.decision and payload.decision not in VALID_DECISION:
+        raise BizError(422, "录用结论无效（pass / hold / reject）", http_status=422)
+
+    row.score = row.ai_score
+    row.dim_scores = row.ai_dim_scores or []
+    row.comment = row.ai_comment or ""
+    row.decision = payload.decision or ""
+    row.scored_at = datetime.now(timezone.utc)
+    row.status = "done"
+    db.commit()
+    db.refresh(row)
+    return ok(_offline_out(row))
+
+
+@router.post("/offline-interviews/{offline_id}/transcribe")
+def transcribe_offline(offline_id: str, db: Session = Depends(get_db)):
+    """手动触发单场转写 + 评分（用于重试 failed 记录，或绑定后立即出结果）。"""
+    oid = _parse_uuid(offline_id, "offline_id")
+    row = db.get(OfflineInterview, oid)
+    if row is None:
+        raise BizError(404, "线下复试记录不存在", http_status=404)
+    if not row.minutes_token:
+        raise BizError(409, "尚未绑定妙记，请先绑定妙记链接", http_status=409)
+
+    transcribed = transcribe_and_score(db, row)
+    db.refresh(row)
+    return ok(
+        {
+            "record": _offline_out(row),
+            "transcript_text": row.transcript_text or "",
+            "transcribed": transcribed,
+        }
+    )
 
 
 @router.delete("/offline-interviews/{offline_id}")

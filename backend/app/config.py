@@ -99,6 +99,16 @@ class Settings(BaseSettings):
     # 单次发送超时（秒）
     feishu_notify_timeout: float = 10.0
 
+    # ── 飞书妙记录音转写（到店直招录音节点）─────────────────────
+    # 总开关：True 时 lifespan 启动后台轮询任务（拉妙记逐字稿 → 整场评分）
+    feishu_minutes_enabled: bool = False
+    # 轮询周期（秒）
+    feishu_minutes_poll_interval: int = 180
+    # 搜索回看窗口（天），单次 search 范围最多 1 个月
+    feishu_minutes_search_window_days: int = 7
+    # 店长 open_id 兜底：未解析到店长 open_id 时，轮询按此所有者搜索（先用发起人自己的 open_id 联调）
+    feishu_minutes_default_owner_open_id: str = ""
+
     @property
     def sqlalchemy_url(self) -> str:
         """返回 SQLAlchemy 可用的数据库 URL（强制使用 psycopg v3 驱动）。"""

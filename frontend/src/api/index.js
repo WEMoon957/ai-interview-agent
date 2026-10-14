@@ -87,6 +87,16 @@ export const uploadOfflineAudio = (id, formData) =>
 export const offlineAudioUrl = (id, download = false) =>
   `/admin/offline-interviews/${id}/audio${download ? '?download=true' : ''}`
 
+// ── 飞书妙记录音节点：手动绑定妙记 / 采纳 AI 参考分 / 手动触发转写 ──
+export const bindMinutes = (id, data) =>
+  request.post(`/admin/offline-interviews/${id}/bind-minutes`, data)
+
+export const adoptAiScore = (id, data) =>
+  request.post(`/admin/offline-interviews/${id}/adopt-ai-score`, data)
+
+export const transcribeOffline = (id) =>
+  request.post(`/admin/offline-interviews/${id}/transcribe`)
+
 // ── 招聘汇总（全链路聚合 + 落库）────────────────────
 export const getSummary = (params) => request.get('/admin/summary', { params })
 

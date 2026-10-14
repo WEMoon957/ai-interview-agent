@@ -1,4 +1,5 @@
 """FastAPI 应用入口。"""
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -32,7 +33,26 @@ async def lifespan(app: FastAPI):
         from app.graph.builder import get_interview_graph
 
         get_interview_graph()
+
+    # 飞书妙记轮询任务（到店直招录音节点）：按开关启动，关闭时优雅停止
+    minutes_stop_event: asyncio.Event | None = None
+    minutes_task: asyncio.Task | None = None
+    if settings.feishu_minutes_enabled:
+        from app.services.minutes_poller import minutes_poll_loop
+
+        minutes_stop_event = asyncio.Event()
+        minutes_task = asyncio.create_task(minutes_poll_loop(minutes_stop_event))
+
     yield
+
+    # 停止妙记轮询任务
+    if minutes_stop_event is not None:
+        minutes_stop_event.set()
+    if minutes_task is not None:
+        try:
+            await minutes_task
+        except Exception:  # noqa: BLE001
+            logger.exception("停止妙记轮询任务时异常")
 
     # 释放 checkpointer 连接池（懒加载模式下若从未使用则为空操作）
     from app.graph.builder import close_interview_graph
