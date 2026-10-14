@@ -612,3 +612,62 @@ def test_screening_notify_no_warning_when_no_links():
         sender=lambda *_: (True, ""),
     )
     assert result["warning"] == ""
+
+
+# ────────────────────────────── 启动配置自检 ──────────────────────────────
+
+
+def _joined(msgs: list[str]) -> str:
+    return " | ".join(msgs)
+
+
+def test_diagnose_silent_when_notify_disabled():
+    assert fn.diagnose_notify_config(make_settings(feishu_notify_enabled=False)) == []
+
+
+def test_diagnose_warns_when_no_recipients():
+    msgs = fn.diagnose_notify_config(
+        make_settings(feishu_hr_open_ids="", feishu_hr_department_ids="", public_base_url="http://1.2.3.4:3000")
+    )
+    assert "未配置收件人" in _joined(msgs)
+
+
+def test_diagnose_warns_cli_without_lark_cli(monkeypatch):
+    """容器/服务器场景：默认 cli 传输但找不到 lark-cli -> 必须告警并给出改法。"""
+    monkeypatch.setattr(fn, "resolve_cli_path", lambda _p: None)
+    msgs = fn.diagnose_notify_config(make_settings(public_base_url="http://1.2.3.4:3000"))
+    text = _joined(msgs)
+    assert "找不到 lark-cli" in text
+    assert "FEISHU_NOTIFY_TRANSPORT=api" in text
+
+
+def test_diagnose_ok_when_cli_available(monkeypatch):
+    monkeypatch.setattr(fn, "resolve_cli_path", lambda _p: "/usr/local/bin/lark-cli")
+    msgs = fn.diagnose_notify_config(make_settings(public_base_url="http://1.2.3.4:3000"))
+    assert msgs == []
+
+
+def test_diagnose_warns_api_without_credentials():
+    msgs = fn.diagnose_notify_config(
+        make_settings(feishu_notify_transport="api", public_base_url="http://1.2.3.4:3000")
+    )
+    assert "缺少 FEISHU_APP_ID" in _joined(msgs)
+
+
+def test_diagnose_ok_with_api_credentials():
+    msgs = fn.diagnose_notify_config(
+        make_settings(
+            feishu_notify_transport="api",
+            feishu_app_id="cli_x",
+            feishu_app_secret="sec",
+            public_base_url="http://1.2.3.4:3000",
+        )
+    )
+    assert msgs == []
+
+
+def test_diagnose_warns_local_public_base():
+    msgs = fn.diagnose_notify_config(
+        make_settings(feishu_notify_transport="api", feishu_app_id="c", feishu_app_secret="s")
+    )
+    assert "PUBLIC_BASE_URL 仍为本机地址" in _joined(msgs)

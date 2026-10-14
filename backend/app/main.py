@@ -1,4 +1,5 @@
 """FastAPI 应用入口。"""
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,12 +7,20 @@ from fastapi import FastAPI
 from app.api import admin, interview, offline, scores, screening, summary
 from app.config import get_settings
 from app.exceptions import register_exception_handlers
+from app.services.feishu_notify import diagnose_notify_config
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：可选执行建表兜底（默认走 Alembic），关闭时释放连接池。"""
     settings = get_settings()
+
+    # 飞书通知配置自检：把「会导致推送静默失败」的配置问题在启动时喊出来
+    for warning in diagnose_notify_config(settings):
+        logger.warning("飞书通知配置告警：%s", warning)
+
     if settings.auto_create_tables:
         from app.db.base import Base
         from app.db.session import engine

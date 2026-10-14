@@ -16,7 +16,7 @@
             </el-select>
             <el-tag v-if="isDirect" type="warning" effect="dark">免初筛 · 直通面试</el-tag>
             <el-button v-if="!isDirect" :loading="notifying" @click="pushToHr">
-              推送榜单给 HR
+              重新推送榜单
             </el-button>
             <el-button type="primary" @click="openUpload">
               {{ isDirect ? '上传简历并生成面试链接' : '上传岗位文件夹' }}
@@ -34,14 +34,32 @@
         title="该岗位已设为「免初筛」：上传简历后不做 AI 打分，直接为每位候选人生成 AI 面试链接。"
       />
 
+      <el-alert
+        v-if="!isDirect"
+        type="success"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+        title="初筛完成后会自动推送给 HR：达到门槛（默认 ≥65）的候选人会生成 AI 面试链接，随卡片一起发出，并同步创建飞书待办 —— 无需手动点击。"
+      />
+
       <!-- 上传结果小结 -->
       <el-alert
         v-if="uploadResult"
         :title="uploadResultTitle"
-        :type="uploadResult.failed ? 'warning' : 'success'"
+        :type="uploadResult.failed ? 'warning' : pushFailed ? 'error' : 'success'"
         :closable="true"
         style="margin-bottom: 12px"
         @close="uploadResult = null"
+      />
+      <el-alert
+        v-if="pushFailed"
+        type="error"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+        :title="`HR 飞书推送失败：${uploadResult?.notify?.reason || '未知原因'}`"
+        description="业务数据已正常入库，不影响使用。常见原因：服务器未把推送改为 api 传输、或 PUBLIC_BASE_URL 仍是本机地址。"
       />
 
       <el-table
@@ -245,6 +263,13 @@ const invitedItems = ref([])
 const currentJob = computed(() => jobs.value.find((j) => j.id === jobId.value))
 const isDirect = computed(() => !!currentJob.value?.skip_screening)
 
+// 自动推送是否失败（用于显著提示，避免"以为没推"）
+const pushFailed = computed(() => {
+  const n = uploadResult.value?.notify
+  if (!n) return false
+  return n.status === 'failed' || n.task?.status === 'failed'
+})
+
 const uploadResultTitle = computed(() => {
   if (!uploadResult.value) return ''
   const r = uploadResult.value
@@ -377,11 +402,15 @@ async function submitUpload() {
       ElMessage.success(`已上传 ${res.succeeded} 份并生成面试链接`)
       if (invitedItems.value.length) linkVisible.value = true
     } else {
-      // 基址仍为本机地址时给出显式告警（卡片里的链接别人打不开）
-      if (res.notify?.warning) {
-        ElMessage.warning(res.notify.warning)
+      // 自动推送失败要显著提示，避免"以为系统没推"
+      const n = res.notify || {}
+      if (n.status === 'failed' || n.task?.status === 'failed') {
+        ElMessage.warning(`初筛完成 ${res.succeeded} 份，但自动推送未成功，详见页面提示`)
+      } else if (n.warning) {
+        // 基址仍为本机地址时给出显式告警（卡片里的链接别人打不开）
+        ElMessage.warning(n.warning)
       } else {
-        ElMessage.success(`初筛完成：成功 ${res.succeeded} 份${notifySuffix(res.notify)}`)
+        ElMessage.success(`初筛完成：成功 ${res.succeeded} 份${notifySuffix(n)}`)
       }
       if (res.note) ElMessage.warning(res.note)
     }

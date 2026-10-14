@@ -588,6 +588,45 @@ def looks_like_local_base(url: str) -> bool:
     return any(tok in u for tok in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]"))
 
 
+def diagnose_notify_config(settings: Settings | None = None) -> list[str]:
+    """启动自检：返回飞书通知配置中「会导致推送静默失败」的可疑项。
+
+    典型场景：服务器容器里没有 lark-cli，但仍沿用默认的 ``cli`` 传输 ——
+    推送会全部失败且只记日志，运营侧表现为「说好的自动推送怎么没来」。
+    这里在启动时把问题显式喊出来。
+    """
+    settings = settings or get_settings()
+    if not settings.feishu_notify_enabled:
+        return []  # 总开关关闭：属于预期，不告警
+
+    warnings: list[str] = []
+    transport = (settings.feishu_notify_transport or "cli").lower()
+
+    if not settings.hr_open_id_list and not settings.hr_department_id_list:
+        warnings.append(
+            "飞书通知已启用但未配置收件人（FEISHU_HR_OPEN_IDS / FEISHU_HR_DEPARTMENT_IDS），推送会被跳过"
+        )
+
+    if transport == "cli":
+        if resolve_cli_path(settings.feishu_lark_cli_path) is None:
+            warnings.append(
+                "传输方式为 cli 但当前环境找不到 lark-cli（容器/服务器常见），"
+                "所有飞书推送都会失败；请改用 FEISHU_NOTIFY_TRANSPORT=api 并配置 "
+                "FEISHU_APP_ID / FEISHU_APP_SECRET"
+            )
+    elif not (settings.feishu_app_id and settings.feishu_app_secret):
+        warnings.append(
+            "传输方式为 api 但缺少 FEISHU_APP_ID / FEISHU_APP_SECRET，推送会失败"
+        )
+
+    if looks_like_local_base(settings.public_base_url_normalized):
+        warnings.append(
+            f"PUBLIC_BASE_URL 仍为本机地址（{settings.public_base_url}），"
+            "卡片/待办里的面试链接在 HR、候选人机器上打不开；请改成公网地址"
+        )
+    return warnings
+
+
 def build_screening_card(
     *,
     job_title: str,
