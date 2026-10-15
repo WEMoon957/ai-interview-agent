@@ -527,19 +527,33 @@ def notify_report_qualified(
 CardSender = Callable[[str, dict, Settings], "tuple[bool, str]"]
 
 
-def build_card(title: str, template: str, blocks: list[str]) -> dict:
-    """构造飞书交互卡片（彩色标题栏 + 若干 Markdown 段落）。
+def build_card(
+    title: str,
+    template: str,
+    blocks: list[str],
+    actions: list[dict] | None = None,
+) -> dict:
+    """构造飞书交互卡片（彩色标题栏 + 若干 Markdown 段落 + 可选按钮区）。
 
     Args:
         title: 卡片标题（plain_text）。
         template: 标题栏配色，如 blue / orange / green / red。
         blocks: 段落内容列表（lark_md），段落之间自动加分隔线。
+        actions: 可选的按钮元素列表（由 :func:`build_button` 构造）；
+            为空时卡片结构与历史行为完全一致（纯文本卡片）。
+
+    说明：按钮点击后由飞书回调我方「卡片请求网址」（见 Offer 审批流），
+    需要应用侧配置回调地址且为公网 HTTPS。
     """
     elements: list[dict] = []
     for idx, block in enumerate(blocks):
         if idx:
             elements.append({"tag": "hr"})
         elements.append({"tag": "div", "text": {"tag": "lark_md", "content": block}})
+
+    if actions:
+        elements.append({"tag": "hr"})
+        elements.append({"tag": "action", "actions": actions})
 
     return {
         "config": {"wide_screen_mode": True},
@@ -551,6 +565,22 @@ def build_card(title: str, template: str, blocks: list[str]) -> dict:
     }
 
 
+def build_button(text: str, value: dict, *, button_type: str = "default") -> dict:
+    """构造卡片按钮元素。
+
+    Args:
+        text: 按钮文案（如「同意」「驳回」）。
+        value: 点击后随回调事件回传的业务参数（如 ``{"offer_id": ..., "action": "approve"}``）。
+        button_type: 飞书按钮样式：primary / danger / default。
+    """
+    return {
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": text},
+        "type": button_type,
+        "value": dict(value or {}),
+    }
+
+
 def card_to_markdown(card: dict) -> str:
     """把卡片降级为纯 Markdown 文本（用于 dry-run 预览与日志）。"""
     title = (card.get("header") or {}).get("title", {}).get("content", "")
@@ -559,6 +589,15 @@ def card_to_markdown(card: dict) -> str:
         if el.get("tag") == "div":
             lines.append((el.get("text") or {}).get("content", ""))
             lines.append("")
+        elif el.get("tag") == "action":
+            labels = [
+                (item.get("text") or {}).get("content", "")
+                for item in (el.get("actions") or [])
+            ]
+            labels = [label for label in labels if label]
+            if labels:
+                lines.append("【按钮】" + " / ".join(labels))
+                lines.append("")
     return "\n".join(lines).strip()
 
 

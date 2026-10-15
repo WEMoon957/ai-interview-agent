@@ -74,6 +74,7 @@ def list_jobs(db: Session = Depends(get_db)):
                 "jd_text": j.jd_text,
                 "requirements": j.requirements,
                 "skip_screening": j.skip_screening,
+                "is_active": j.is_active,
                 "created_at": j.created_at.isoformat() if j.created_at else None,
             }
             for j in jobs
@@ -130,6 +131,7 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db)):
         jd_text=payload.jd_text or "",
         requirements=payload.requirements or {},
         skip_screening=bool(payload.skip_screening),
+        is_active=bool(payload.is_active),
     )
     db.add(job)
     db.commit()
@@ -142,6 +144,7 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db)):
             "jd_text": job.jd_text,
             "requirements": job.requirements,
             "skip_screening": job.skip_screening,
+            "is_active": job.is_active,
         }
     )
 
@@ -164,6 +167,8 @@ def update_job(job_id: str, payload: JobUpdate, db: Session = Depends(get_db)):
         job.requirements = payload.requirements
     if payload.skip_screening is not None:
         job.skip_screening = bool(payload.skip_screening)
+    if payload.is_active is not None:
+        job.is_active = bool(payload.is_active)
 
     db.commit()
     db.refresh(job)
@@ -174,6 +179,7 @@ def update_job(job_id: str, payload: JobUpdate, db: Session = Depends(get_db)):
             "jd_text": job.jd_text,
             "requirements": job.requirements,
             "skip_screening": job.skip_screening,
+            "is_active": job.is_active,
         }
     )
 

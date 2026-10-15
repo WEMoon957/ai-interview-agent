@@ -39,6 +39,10 @@
           <el-icon><PieChart /></el-icon>
           <span>数据汇总</span>
         </el-menu-item>
+        <el-menu-item index="/console/offers">
+          <el-icon><Ticket /></el-icon>
+          <span>Offer / 入职</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -56,7 +60,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Odometer, Briefcase, Document, Files, User, OfficeBuilding, DataAnalysis, PieChart, Reading } from '@element-plus/icons-vue'
+import { Odometer, Briefcase, Document, Files, User, OfficeBuilding, DataAnalysis, PieChart, Reading, Ticket } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const activeMenu = computed(() => route.path)

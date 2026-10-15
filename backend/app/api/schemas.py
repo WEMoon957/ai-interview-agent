@@ -25,6 +25,8 @@ class JobCreate(BaseModel):
     requirements: dict = Field(default_factory=dict, description="岗位要求（JSON 对象）")
     # 免简历初筛：True 时上传简历直接生成 AI 面试链接
     skip_screening: bool = Field(default=False, description="是否免简历初筛（直接发 AI 面试）")
+    # 在招开关：停招后不允许再为该岗位发起 Offer
+    is_active: bool = Field(default=True, description="是否在招（停招后不允许发起 Offer）")
 
 
 class JobUpdate(BaseModel):
@@ -34,6 +36,7 @@ class JobUpdate(BaseModel):
     jd_text: str | None = Field(default=None, description="岗位 JD 描述")
     requirements: dict | None = Field(default=None, description="岗位要求（JSON 对象）")
     skip_screening: bool | None = Field(default=None, description="是否免简历初筛")
+    is_active: bool | None = Field(default=None, description="是否在招（停招后不允许发起 Offer）")
 
 
 class TemplateCreate(BaseModel):
@@ -243,3 +246,60 @@ class SummaryRebuild(BaseModel):
     """生成汇总快照请求体。"""
 
     job_id: str = Field(description="岗位 id；留空岗位可先查询再指定")
+
+
+# ── Offer → 入职闭环（第⑤阶段）──────────────────────────────
+
+
+class OfferCreate(BaseModel):
+    """起草 Offer 请求体。"""
+
+    summary_id: str = Field(description="招聘汇总记录 id")
+    store_name: str = Field(min_length=1, description="报到门店")
+    report_date: str = Field(description="拟报到日期（YYYY-MM-DD）")
+    job_title: str | None = Field(default=None, description="岗位名（留空取岗位当前名称）")
+    probation_days: int = Field(default=30, ge=0, description="试用期天数")
+    note: str = Field(default="", description="备注（薪资等敏感信息不入库，需要时可自由填写）")
+
+
+class OfferUpdate(BaseModel):
+    """修改 Offer 请求体（仅草稿 / 被驳回状态可改）。"""
+
+    job_title: str | None = Field(default=None, description="岗位名")
+    store_name: str | None = Field(default=None, description="报到门店")
+    report_date: str | None = Field(default=None, description="拟报到日期（YYYY-MM-DD）")
+    probation_days: int | None = Field(default=None, ge=0, description="试用期天数")
+    note: str | None = Field(default=None, description="备注")
+
+
+class OfferApprove(BaseModel):
+    """审批通过请求体。"""
+
+    note: str = Field(default="", description="审批意见（可选）")
+
+
+class OfferReject(BaseModel):
+    """审批驳回请求体（意见必填）。"""
+
+    note: str = Field(min_length=1, description="驳回意见")
+
+
+class OfferWithdraw(BaseModel):
+    """撤回 Offer 请求体。"""
+
+    reason: str = Field(default="", description="撤回原因")
+
+
+class OfferOnboard(BaseModel):
+    """办理入职请求体。"""
+
+    result: str = Field(description="onboarded（已报到）/ no_show（未报到）")
+    actual_report_date: str | None = Field(default=None, description="实际报到日期（YYYY-MM-DD）")
+    onboard_store: str = Field(default="", description="实际报到门店（留空取 Offer 门店）")
+    note: str = Field(default="", description="未报到说明（result=no_show 时必填）")
+
+
+class OfferDecline(BaseModel):
+    """候选人婉拒请求体（理由为自由文本，选填）。"""
+
+    reason_text: str = Field(default="", description="婉拒理由（自由文本）")

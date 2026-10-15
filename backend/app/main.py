@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import admin, interview, offline, scores, screening, summary
+from app.api import admin, interview, offline, offers, scores, screening, summary
 from app.config import get_settings
 from app.exceptions import register_exception_handlers
 from app.services.feishu_notify import diagnose_notify_config
@@ -77,6 +77,9 @@ app.include_router(scores.router)
 app.include_router(screening.router)
 app.include_router(offline.router)
 app.include_router(summary.router)
+# Offer → 入职闭环（管理端 + 候选人端）
+app.include_router(offers.router)
+app.include_router(offers.candidate_router)
 
 
 @app.get("/health", tags=["health"])

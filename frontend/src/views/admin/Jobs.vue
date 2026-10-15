@@ -35,6 +35,18 @@
             />
           </template>
         </el-table-column>
+        <el-table-column label="在招状态" width="140">
+          <template #default="{ row }">
+            <el-switch
+              :model-value="row.is_active !== false"
+              active-text="在招"
+              inactive-text="停招"
+              inline-prompt
+              style="--el-switch-on-color: #10b981"
+              @change="(val) => toggleActive(row, val)"
+            />
+          </template>
+        </el-table-column>
         <el-table-column label="创建时间" width="160">
           <template #default="{ row }">
             {{ formatTime(row.created_at) }}
@@ -52,7 +64,7 @@
         :closable="false"
         show-icon
         style="margin-top: 12px"
-        title="「免初筛」岗位：在『简历初筛』页上传简历文件夹后，不做 AI 打分，直接为每位候选人生成 AI 面试链接。"
+        title="「免初筛」岗位：在『简历初筛』页上传简历文件夹后，不做 AI 打分，直接为每位候选人生成 AI 面试链接。；「停招」岗位无法再发起新的 Offer。"
       />
     </el-card>
 
@@ -159,6 +171,28 @@ async function toggleSkipScreening(row, val) {
     await updateJob(row.id, { skip_screening: val })
     row.skip_screening = val
     ElMessage.success(val ? '已设为免初筛：上传简历即发面试链接' : '已设为需初筛')
+  } catch {
+    // 失败时保持原值（响应拦截已提示）
+  }
+}
+
+async function toggleActive(row, val) {
+  // 停招后不允许再为该岗位发起 Offer（已发出的不受影响），需二次确认避免误触
+  if (!val) {
+    try {
+      await ElMessageBox.confirm(
+        `将「${row.title}」设为停招后，无法再为该岗位发起新的 Offer（已发出的 Offer 不受影响）。确定吗？`,
+        '切换为停招',
+        { confirmButtonText: '确定停招', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return // 取消：开关保持原值
+    }
+  }
+  try {
+    await updateJob(row.id, { is_active: val })
+    row.is_active = val
+    ElMessage.success(val ? '已恢复在招' : '已设为停招')
   } catch {
     // 失败时保持原值（响应拦截已提示）
   }

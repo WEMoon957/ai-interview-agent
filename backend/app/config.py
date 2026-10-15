@@ -109,6 +109,22 @@ class Settings(BaseSettings):
     # 店长 open_id 兜底：未解析到店长 open_id 时，轮询按此所有者搜索（先用发起人自己的 open_id 联调）
     feishu_minutes_default_owner_open_id: str = ""
 
+    # ── Offer → 入职闭环（第⑤阶段）──────────────────────────────
+    # 状态卡片推送总开关（关闭后所有 Offer 通知静默，业务主流程不受影响）
+    feishu_offer_notify_enabled: bool = True
+    # 发起 Offer 的最低最终加权分门槛（低于该值不允许发起，对齐「推荐」档）
+    offer_min_final_score: float = 65.0
+    # 候选人确认截止：发出后「次日本地 HH:00」（默认次日 08:00）
+    offer_confirm_hour: int = 8
+    # 截止时间所用本地时区偏移（小时）；8 = 北京时间 UTC+8
+    offer_confirm_tz_offset: int = 8
+    # Offer 审批人 open_id（ou_ 开头），多个用英文逗号分隔；为空时不允许提交审批
+    offer_approver_open_ids: str = ""
+    # 店长收件人 open_id（ou_ 开头），多个用英文逗号分隔；候选人接受后同步通知店长
+    feishu_store_manager_open_ids: str = ""
+    # 候选人确认页展示的 HR 联系电话（候选人放弃线上确认时走线下兜底）
+    hr_contact_phone: str = ""
+
     @property
     def sqlalchemy_url(self) -> str:
         """返回 SQLAlchemy 可用的数据库 URL（强制使用 psycopg v3 驱动）。"""
@@ -152,6 +168,24 @@ class Settings(BaseSettings):
         return [
             item.strip()
             for item in (self.feishu_task_assignee_open_ids or "").split(",")
+            if item.strip()
+        ]
+
+    @property
+    def offer_approver_list(self) -> list[str]:
+        """Offer 审批人 open_id 列表（解析逗号分隔串，忽略空白项）。"""
+        return [
+            item.strip()
+            for item in (self.offer_approver_open_ids or "").split(",")
+            if item.strip()
+        ]
+
+    @property
+    def store_manager_list(self) -> list[str]:
+        """店长收件人 open_id 列表（候选人接受后同步通知）。"""
+        return [
+            item.strip()
+            for item in (self.feishu_store_manager_open_ids or "").split(",")
             if item.strip()
         ]
 

@@ -113,3 +113,39 @@ export const notifySummary = (params) => request.post('/admin/summary/notify', n
 
 export const listSummarySnapshots = (params) =>
   request.get('/admin/summary/snapshots', { params })
+
+// ── Offer / 入职闭环（第⑤阶段）──────────────────────
+export const listOffers = (params) => request.get('/admin/offers', { params })
+
+export const getOffer = (offerId) => request.get(`/admin/offers/${offerId}`)
+
+export const getOfferStats = (params) => request.get('/admin/offers/stats', { params })
+
+export const createOffer = (data) => request.post('/admin/offers', data)
+
+export const updateOffer = (offerId, data) => request.patch(`/admin/offers/${offerId}`, data)
+
+// 提交审批（draft / rejected → 待审批，推审批卡片给审批人）
+export const submitOfferApproval = (offerId) =>
+  request.post(`/admin/offers/${offerId}/submit-approval`)
+
+// 审批通过（后台兜底入口；通过后生成候选人确认链接）
+export const approveOffer = (offerId, data) =>
+  request.post(`/admin/offers/${offerId}/approve`, data || {})
+
+export const rejectOffer = (offerId, data) =>
+  request.post(`/admin/offers/${offerId}/reject`, data)
+
+export const withdrawOffer = (offerId, data) =>
+  request.post(`/admin/offers/${offerId}/withdraw`, data || {})
+
+// 办理入职：result = onboarded（已报到）/ no_show（未报到，note 必填）
+export const onboardOffer = (offerId, data) =>
+  request.post(`/admin/offers/${offerId}/onboard`, data)
+
+// 候选人端（token 即凭证）
+export const getOfferContext = (token) => request.get(`/offer/${token}`)
+
+export const acceptOffer = (token) => request.post(`/offer/${token}/accept`)
+
+export const declineOffer = (token, data) => request.post(`/offer/${token}/decline`, data || {})

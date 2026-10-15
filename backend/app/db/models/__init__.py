@@ -4,6 +4,7 @@ from app.db.models.company import CompanyProfile
 from app.db.models.evaluation import AnswerEvaluation
 from app.db.models.job import JobPosting
 from app.db.models.offline import OfflineInterview
+from app.db.models.offer import Offer
 from app.db.models.report import SessionReport
 from app.db.models.resume import Resume
 from app.db.models.screening import ResumeScreening
@@ -25,4 +26,6 @@ __all__ = [
     "ResumeScreening",
     "OfflineInterview",
     "RecruitmentSummary",
+    # Offer → 入职闭环（第⑤阶段）
+    "Offer",
 ]

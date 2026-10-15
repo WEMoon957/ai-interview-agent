@@ -12,6 +12,13 @@ const routes = [
     component: () => import('../views/Interview.vue'),
     meta: { title: '面试' },
   },
+  // 候选人 Offer 确认页（通过 token 进入，无需登录）
+  {
+    path: '/o/:token',
+    name: 'offer-confirm',
+    component: () => import('../views/OfferConfirm.vue'),
+    meta: { title: 'Offer 确认' },
+  },
   // 管理员后台（前端路由用 /console 前缀，避免与后端 /admin API 冲突）
   {
     path: '/console',
@@ -72,6 +79,12 @@ const routes = [
         name: 'summary',
         component: () => import('../views/admin/Summary.vue'),
         meta: { title: '数据汇总' },
+      },
+      {
+        path: 'offers',
+        name: 'offers',
+        component: () => import('../views/admin/Offers.vue'),
+        meta: { title: 'Offer / 入职' },
       },
     ],
   },

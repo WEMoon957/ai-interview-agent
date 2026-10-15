@@ -17,3 +17,5 @@ class JobPosting(TimestampMixin, Base):
     requirements: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     # 免简历初筛：置 True 时上传简历直接生成 AI 面试链接，跳过 AI 初筛打分
     skip_screening: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # 在招开关：停招（False）后不允许再为该岗位发起 Offer，已有 Offer 不受影响
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

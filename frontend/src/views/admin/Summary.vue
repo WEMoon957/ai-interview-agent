@@ -99,11 +99,27 @@
           </template>
         </el-table-column>
         <el-table-column prop="summary" label="汇总说明" min-width="260" show-overflow-tooltip />
+        <el-table-column label="操作" width="130" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              type="primary"
+              size="small"
+              :disabled="!canOffer(row)"
+              :title="offerDisabledReason(row)"
+              @click="openOffer(row)"
+            >
+              发起 Offer
+            </el-button>
+          </template>
+        </el-table-column>
         <template #empty>
           <el-empty description="暂无汇总数据；可先上传简历、跑 AI 面试与线下复试后再汇总" />
         </template>
       </el-table>
     </el-card>
+
+    <!-- 发起 Offer（预填候选人 / 岗位；门店由 HR 填写）-->
+    <OfferCreateDialog v-model="offerVisible" :context="offerContext" @saved="reload" />
   </div>
 </template>
 
@@ -111,6 +127,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listJobs, getSummary, rebuildSummary, listSummarySnapshots, notifySummary } from '../../api'
+import OfferCreateDialog from '../../components/OfferCreateDialog.vue'
 
 const jobs = ref([])
 const jobId = ref('')
@@ -168,6 +185,38 @@ function stageText(s) {
 }
 function jobTitle(id) {
   return jobs.value.find((j) => j.id === id)?.title || '-'
+}
+
+// ── 发起 Offer ──────────────────────────────────────────────
+// 门槛与后端 OFFER_MIN_FINAL_SCORE 对齐（默认 65）；最终以后端校验为准
+const OFFER_MIN_SCORE = 65
+const offerVisible = ref(false)
+const offerContext = ref(null)
+
+function canOffer(row) {
+  return offerDisabledReason(row) === ''
+}
+
+function offerDisabledReason(row) {
+  // 实时汇总行没有落库 id，无法作为 offers.summary_id 外键
+  if (!row.id) return '请先「生成 / 更新汇总落库」并切到「已落库快照」'
+  if (!row.is_complete) return '需先走完全链路'
+  if (row.final_score == null || row.final_score < OFFER_MIN_SCORE) {
+    return `最终分低于 ${OFFER_MIN_SCORE}，不允许发起`
+  }
+  const job = jobs.value.find((j) => j.id === row.job_id)
+  if (job && job.is_active === false) return '该岗位已停招'
+  return ''
+}
+
+function openOffer(row) {
+  offerContext.value = {
+    summary_id: row.id,
+    candidate_name: row.candidate_name,
+    job_title: row.job_title || jobTitle(row.job_id),
+    store_name: '',
+  }
+  offerVisible.value = true
 }
 
 async function reload() {
