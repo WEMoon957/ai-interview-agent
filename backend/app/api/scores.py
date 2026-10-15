@@ -2,17 +2,25 @@
 
 独立于 /admin（后台管理）与 /interview（候选人答题），语义为「评分结果对外读取」，
 返回候选人信息 + 综合分 + 等级建议 + 各维度得分，便于其他系统直接消费。
+
+鉴权：该接口面向**外部系统**（无浏览器会话），因此不复用后台登录态，
+而是要求调用方在请求头带 ``X-API-Key``（密钥配置项 ``SCORES_API_KEY``）。
+未配置密钥时接口一律拒绝（503），遵循"安全默认"。
 """
 import uuid
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, ok
+from app.api.deps import get_db, ok, require_api_key
 from app.db.models import Candidate, InterviewSession, SessionReport
 from app.exceptions import BizError
 
-router = APIRouter(prefix="/api/scores", tags=["scores"])
+router = APIRouter(
+    prefix="/api/scores",
+    tags=["scores"],
+    dependencies=[Depends(require_api_key)],
+)
 
 
 def _parse_uuid(value: str, label: str) -> uuid.UUID:

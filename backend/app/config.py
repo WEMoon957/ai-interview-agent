@@ -125,6 +125,43 @@ class Settings(BaseSettings):
     # 候选人确认页展示的 HR 联系电话（候选人放弃线上确认时走线下兜底）
     hr_contact_phone: str = ""
 
+    # ── 后台登录鉴权（安全改造：账号密码 + 服务端会话）───────────
+    # 会话有效期（小时）。12 = 上班登录一次，当天下班后失效
+    auth_session_hours: int = 12
+    # Cookie 是否带 Secure 标记。**仅在 HTTPS 下置 True** ——
+    # HTTP 部署时置 True 会导致浏览器不回传 Cookie，表现为"登录后立刻掉线"。
+    auth_cookie_secure: bool = False
+    # Cookie Domain，留空表示当前域名（同域部署无需设置）
+    auth_cookie_domain: str = ""
+    # 连续失败达到该次数触发账号锁定
+    auth_login_max_failures: int = 5
+    # 首次锁定时长（分钟）；之后按 2 的幂指数退避，封顶 24 小时
+    auth_login_lock_minutes: int = 15
+    # IP 维度限流：窗口（秒）内允许的登录失败/锁定次数上限
+    auth_login_rate_window_seconds: int = 900
+    auth_login_rate_max_attempts: int = 10
+    # 外部系统读取评分接口（/api/scores/*）所需的 API Key（请求头 X-API-Key）。
+    # 留空 = 该接口一律拒绝（安全默认：不配置就不放行，而不是不配置就全放开）。
+    scores_api_key: str = ""
+    # 允许的跨域来源白名单（逗号分隔）。同域部署留空即可；**禁止填 "*"**
+    cors_allow_origins: str = ""
+    # 安全响应头总开关（X-Content-Type-Options / X-Frame-Options 等）
+    security_headers_enabled: bool = True
+    # Content-Security-Policy 是否下发。本机 Vite dev 会注入内联脚本与 HMR
+    # websocket，开发时置 False；生产由 nginx 下发完整 CSP。
+    security_csp_enabled: bool = False
+    # 生产建议关闭：/docs、/redoc、/openapi.json 会暴露完整接口结构
+    enable_api_docs: bool = True
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """解析跨域白名单元素（忽略空白项与通配符 "*"）。"""
+        return [
+            item.strip()
+            for item in (self.cors_allow_origins or "").split(",")
+            if item.strip() and item.strip() != "*"
+        ]
+
     @property
     def sqlalchemy_url(self) -> str:
         """返回 SQLAlchemy 可用的数据库 URL（强制使用 psycopg v3 驱动）。"""

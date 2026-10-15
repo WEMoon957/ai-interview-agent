@@ -1,7 +1,7 @@
 <template>
   <div>
-    <!-- 待 HR / 店长处理：AI 面试已完成、尚未打分的人 -->
-    <el-card shadow="never" class="pending-card">
+    <!-- 待 HR / 店长处理：AI 面试已完成、尚未打分的人（数据来自汇总接口，仅 HR/管理员可见） -->
+    <el-card v-if="isHrView" shadow="never" class="pending-card">
       <template #header>
         <div class="card-header">
           <span>
@@ -66,8 +66,8 @@
               <el-option label="线上投递" value="online" />
               <el-option label="到店直招" value="walk_in" />
             </el-select>
-            <el-button type="warning" @click="openWalkIn">到店直招</el-button>
-            <el-button type="primary" @click="openCreate">新增约面</el-button>
+            <el-button v-if="isHrView" type="warning" @click="openWalkIn">到店直招</el-button>
+            <el-button v-if="isHrView" type="primary" @click="openCreate">新增约面</el-button>
           </div>
         </div>
       </template>
@@ -162,7 +162,8 @@
               {{ row.score != null ? '修改打分' : '打分' }}
             </el-button>
             <el-button size="small" text @click="openEdit(row)">改期</el-button>
-            <el-button size="small" text type="danger" @click="handleDelete(row)">删除</el-button>
+            <!-- 删除会连带影响招聘汇总，仅 HR / 管理员（店长用「爽约/取消」状态代替） -->
+            <el-button v-if="isHrView" size="small" text type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
         <template #empty>
@@ -418,8 +419,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useAuthStore } from '../../stores/auth'
 import {
   listJobs,
   listScreenings,
@@ -540,6 +542,11 @@ function transcriptStatusType(s) {
   }[s] || 'info'
 }
 
+// 角色视图：HR/管理员看全部入口；店长只见自己的面试记录与打分。
+// 与后端权限矩阵一致（delete / summary / screenings 均限 HR+admin）。
+const auth = useAuthStore()
+const isHrView = computed(() => ['admin', 'hr'].includes(auth.user?.role))
+
 async function load() {
   loading.value = true
   try {
@@ -552,7 +559,8 @@ async function load() {
   } finally {
     loading.value = false
   }
-  await loadPending()
+  // 待办列表数据来自汇总接口（仅 HR/管理员有权调用），店长跳过避免 403 报错
+  if (isHrView.value) await loadPending()
 }
 
 // ── 到店直招 ────────────────────────────────────────

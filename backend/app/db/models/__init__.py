@@ -1,4 +1,7 @@
 """ORM 模型汇总导出（供 Alembic autogenerate 与业务引用）。"""
+from app.db.models.admin_session import AdminSession
+from app.db.models.admin_user import AdminUser
+from app.db.models.audit_log import AuditLog
 from app.db.models.candidate import Candidate
 from app.db.models.company import CompanyProfile
 from app.db.models.evaluation import AnswerEvaluation
@@ -28,4 +31,8 @@ __all__ = [
     "RecruitmentSummary",
     # Offer → 入职闭环（第⑤阶段）
     "Offer",
+    # 后台账号体系（安全改造：登录鉴权）
+    "AdminUser",
+    "AdminSession",
+    "AuditLog",
 ]

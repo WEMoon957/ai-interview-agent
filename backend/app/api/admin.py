@@ -29,6 +29,11 @@ from app.services.resume_parser import parse_resume
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
+# 基础数据路由：登录即可访问（含店长），不放 router 级角色限制。
+# 目前只有「岗位列表」—— 店长在建到店直招 / 线下复试时需要岗位下拉框。
+# 注意：岗位的增删改仍在上方 router（HR / 管理员专属）。
+base_data_router = APIRouter(prefix="/admin", tags=["admin"])
+
 
 def _parse_uuid(value: str, label: str) -> uuid.UUID:
     """解析 UUID 字符串，失败抛 422。"""
@@ -62,9 +67,9 @@ def _delete_session_cascade(db: Session, session_id: uuid.UUID) -> None:
     )
 
 
-@router.get("/jobs")
+@base_data_router.get("/jobs")
 def list_jobs(db: Session = Depends(get_db)):
-    """岗位列表。"""
+    """岗位列表（基础数据：HR / 管理员 / 店长登录后均可读）。"""
     jobs = db.query(JobPosting).order_by(JobPosting.created_at.desc()).all()
     return ok(
         [

@@ -149,3 +149,28 @@ export const getOfferContext = (token) => request.get(`/offer/${token}`)
 export const acceptOffer = (token) => request.post(`/offer/${token}/accept`)
 
 export const declineOffer = (token, data) => request.post(`/offer/${token}/decline`, data || {})
+
+// ── 后台登录鉴权（安全改造）──────────────────────────
+// 会话凭据由后端写入 HttpOnly Cookie，前端不接触 token
+export const authLogin = (data) => request.post('/auth/login', data)
+
+export const authLogout = () => request.post('/auth/logout')
+
+// silent：探测登录态时预期会 401，不弹错误提示、不触发跳转
+export const authMe = () => request.get('/auth/me', { silent: true })
+
+export const authChangePassword = (data) => request.post('/auth/change-password', data)
+
+// 账号管理（仅 admin 角色可用）
+export const listAdminUsers = () => request.get('/auth/users')
+
+export const createAdminUser = (data) => request.post('/auth/users', data)
+
+export const disableAdminUser = (userId) => request.post(`/auth/users/${userId}/disable`)
+
+export const enableAdminUser = (userId) => request.post(`/auth/users/${userId}/enable`)
+
+export const resetAdminUserPassword = (userId, data) =>
+  request.post(`/auth/users/${userId}/reset-password`, data)
+
+export const unlockAdminUser = (userId) => request.post(`/auth/users/${userId}/unlock`)

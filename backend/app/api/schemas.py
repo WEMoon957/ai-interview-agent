@@ -1,8 +1,9 @@
 """API 请求/响应 Pydantic 模型。"""
 import uuid
+from datetime import datetime
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.schemas import DimensionScore, Question, RubricDimension
 
@@ -303,3 +304,65 @@ class OfferDecline(BaseModel):
     """候选人婉拒请求体（理由为自由文本，选填）。"""
 
     reason_text: str = Field(default="", description="婉拒理由（自由文本）")
+
+
+# ── 后台登录鉴权（安全改造）────────────────────────────────────
+class LoginRequest(BaseModel):
+    """后台登录请求体。
+
+    密码长度上限与 ``app.security.passwords.MAX_PASSWORD_LENGTH`` 对齐，
+    在进入哈希计算前就把超长输入拦掉。
+    """
+
+    username: str = Field(min_length=1, max_length=64, description="用户名")
+    password: str = Field(min_length=1, max_length=128, description="密码")
+
+
+class ChangePasswordRequest(BaseModel):
+    """本人修改密码请求体。"""
+
+    current_password: str = Field(min_length=1, max_length=128, description="当前密码")
+    new_password: str = Field(min_length=1, max_length=128, description="新密码")
+
+
+class AdminUserOut(BaseModel):
+    """后台账号对外视图（**绝不包含** password_hash 等敏感字段）。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    username: str
+    display_name: str
+    email: str | None = None
+    role: str
+    is_active: bool
+    # 账号管理页展示用（登录接口同样携带，不影响安全：都是非敏感状态字段）
+    last_login_at: datetime | None = None
+    # 非空且晚于当前时间 = 处于登录失败锁定窗口
+    locked_until: datetime | None = None
+    created_by: str = ""
+
+
+class LoginOut(BaseModel):
+    """登录成功响应体。"""
+
+    user: AdminUserOut
+    # CSRF token 同时写入非 HttpOnly Cookie 与响应体，前端可任选一处读取
+    csrf_token: str
+    expires_at: str
+
+
+class CreateAdminUserRequest(BaseModel):
+    """管理员创建后台账号请求体（系统不提供自助注册）。"""
+
+    username: str = Field(min_length=3, max_length=64, description="用户名（字母/数字/._-）")
+    password: str = Field(min_length=1, max_length=128, description="初始密码")
+    role: str = Field(default="hr", description="角色：admin / hr / store_manager")
+    email: str | None = Field(default=None, description="邮箱（选填）")
+    display_name: str = Field(default="", max_length=128, description="展示名（选填）")
+
+
+class ResetPasswordRequest(BaseModel):
+    """管理员重置他人密码请求体。"""
+
+    new_password: str = Field(min_length=1, max_length=128, description="新密码")

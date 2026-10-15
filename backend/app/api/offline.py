@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, Form, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, ok
+from app.api.deps import get_db, ok, require_role
 from app.api.schemas import (
     AdoptAiScore,
     MinutesBind,
@@ -39,6 +39,7 @@ from app.db.models import (
     OfflineInterview,
     ResumeScreening,
 )
+from app.db.models.admin_user import ADMIN_ROLE, HR_ROLE, STORE_MANAGER_ROLE
 from app.exceptions import BizError
 from app.services.audio_storage import audio_abs_path, delete_audio
 from app.services.feishu_minutes import extract_minute_token, generate_walk_in_code
@@ -346,13 +347,24 @@ def list_offline_interviews(
 
 @router.put("/offline-interviews/{offline_id}")
 def update_offline_interview(
-    offline_id: str, payload: OfflineInterviewUpdate, db: Session = Depends(get_db)
+    offline_id: str,
+    payload: OfflineInterviewUpdate,
+    db: Session = Depends(get_db),
+    actor=Depends(require_role(ADMIN_ROLE, HR_ROLE, STORE_MANAGER_ROLE)),
 ):
-    """更新线下复试安排（改期 / 改地点 / 改面试官 / 改状态）。"""
+    """更新线下复试安排（改期 / 改地点 / 改面试官 / 改状态）。
+
+    店长可更新（改期、标记爽约/取消），但**改面试官**字段仅 HR / 管理员
+    可改——面试官归属影响妙记录音轮询的归属匹配，不交给平级调整。
+    """
     oid = _parse_uuid(offline_id, "offline_id")
     row = db.get(OfflineInterview, oid)
     if row is None:
         raise BizError(404, "线下复试记录不存在", http_status=404)
+
+    if payload.interviewer is not None or payload.interviewer_role is not None:
+        if actor.role not in (ADMIN_ROLE, HR_ROLE):
+            raise BizError(403, "面试官信息仅 HR / 管理员可修改", http_status=403)
 
     if payload.scheduled_at is not None:
         row.scheduled_at = _parse_dt(payload.scheduled_at, "scheduled_at")
@@ -474,8 +486,16 @@ def transcribe_offline(offline_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/offline-interviews/{offline_id}")
-def delete_offline_interview(offline_id: str, db: Session = Depends(get_db)):
-    """删除线下复试记录（连同已上传的面试录音文件）。"""
+def delete_offline_interview(
+    offline_id: str,
+    db: Session = Depends(get_db),
+    _actor=Depends(require_role(ADMIN_ROLE, HR_ROLE)),
+):
+    """删除线下复试记录（连同已上传的面试录音文件）。
+
+    仅 HR / 管理员可删：删除会连带影响招聘汇总数据，属于管理操作，
+    不放开给店长（店长改用「爽约 / 取消」状态表达面试未发生）。
+    """
     oid = _parse_uuid(offline_id, "offline_id")
     row = db.get(OfflineInterview, oid)
     if row is None:

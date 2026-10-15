@@ -3,11 +3,15 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, interview, offline, offers, scores, screening, summary
+from app.api import admin, auth, interview, offline, offers, scores, screening, summary
+from app.api.deps import require_role, require_user
 from app.config import get_settings
+from app.db.models.admin_user import ADMIN_ROLE, HR_ROLE
 from app.exceptions import register_exception_handlers
+from app.middleware.security import AdminWriteAuditMiddleware, SecurityHeadersMiddleware
 from app.services.feishu_notify import diagnose_notify_config
 
 logger = logging.getLogger(__name__)
@@ -60,26 +64,59 @@ async def lifespan(app: FastAPI):
     close_interview_graph()
 
 
+_settings = get_settings()
+
 app = FastAPI(
     title="AI 面试智能体",
     description="多轮 AI 面试后端核心链路（LangGraph + FastAPI）",
     version="0.1.0",
     lifespan=lifespan,
+    # 生产建议关闭接口文档：/docs 会把全部接口结构摊开给任何人看
+    docs_url="/docs" if _settings.enable_api_docs else None,
+    redoc_url="/redoc" if _settings.enable_api_docs else None,
+    openapi_url="/openapi.json" if _settings.enable_api_docs else None,
 )
 
 register_exception_handlers(app)
 
-# 管理端 + 候选人端 + 评分查询路由
-app.include_router(admin.router)
-app.include_router(interview.router)
+# ── 中间件（add_middleware 后加者位于外层）────────────────────
+# 1) 审计放最内层：只有在这里才能读到 require_user 写进 scope["state"] 的登录用户
+app.add_middleware(AdminWriteAuditMiddleware)
+# 2) 安全响应头放外层：保证 CORS 预检等被短路的响应同样带上安全头
+if _settings.security_headers_enabled:
+    app.add_middleware(SecurityHeadersMiddleware, enable_csp=_settings.security_csp_enabled)
+# 3) CORS 只按白名单放行；同域部署（本项目默认）留空即等于不开放跨域
+if _settings.cors_origins_list:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_settings.cors_origins_list,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "X-CSRF-Token", "X-API-Key"],
+    )
+
+# ── 路由挂载 ─────────────────────────────────────────────────
+# 公开路由（显式白名单）：改动此处必须同步更新 docs/安全改造方案 的清单
+app.include_router(auth.router)  # 登录/登出/改密（内部按接口自带保护）
+app.include_router(interview.router)  # 候选人答题：以 URL 中不可猜 token 为凭证
+app.include_router(offers.candidate_router)  # 候选人 Offer 确认：同上
+
+# 受保护路由：统一挂 require_user，端点函数里不再重复写校验
+_protected = [Depends(require_user)]
+# HR 职责路由：简历原件、面试对话全文、汇总排名、Offer 属于 HR/管理员的
+# 数据视野，不放开给店长（店长的入口在 offline 路由）
+_hr_only = [Depends(require_user), Depends(require_role(ADMIN_ROLE, HR_ROLE))]
+app.include_router(admin.router, dependencies=_hr_only)
+app.include_router(screening.router, dependencies=_hr_only)
+app.include_router(summary.router, dependencies=_hr_only)
+app.include_router(offers.router, dependencies=_hr_only)
+# 基础数据（岗位列表）：三种角色登录后均可读 —— 店长的工作台需要岗位下拉
+app.include_router(admin.base_data_router, dependencies=_protected)
+# 线下复试：三种角色都能进（店长的核心工作台），端点级再加细粒度限制
+# （如删除限 HR、改面试官限 HR，见 app/api/offline.py）
+app.include_router(offline.router, dependencies=_protected)
+# 评分查询：面向外部系统，用 API Key 而非登录态（端点级依赖见 scores.py）
 app.include_router(scores.router)
-# 招聘全链路：简历初筛 / 线下复试 / 汇总落库
-app.include_router(screening.router)
-app.include_router(offline.router)
-app.include_router(summary.router)
-# Offer → 入职闭环（管理端 + 候选人端）
-app.include_router(offers.router)
-app.include_router(offers.candidate_router)
 
 
 @app.get("/health", tags=["health"])

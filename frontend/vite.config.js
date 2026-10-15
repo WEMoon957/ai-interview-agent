@@ -12,6 +12,11 @@ export default defineConfig({
       '.trycloudflare.com', // 允许所有 cloudflare 临时域名
     ],
     proxy: {
+      // 后台登录鉴权（服务端会话，Cookie 需同源，故走代理）
+      '/auth': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       '/admin': {
         target: 'http://localhost:8000',
         changeOrigin: true,
