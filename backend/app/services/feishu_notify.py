@@ -1033,17 +1033,23 @@ def create_tasks(
     *,
     settings: Settings | None = None,
     creator: TaskCreator | None = None,
+    assignees: list[str] | None = None,
 ) -> tuple[bool, list[str], str]:
-    """为每个待办负责人创建一条任务；任一人成功即视为成功。绝不抛异常。"""
+    """为每个待办负责人创建一条任务；任一人成功即视为成功。绝不抛异常。
+
+    Args:
+        assignees: 显式指定负责人 open_id 列表（如 Offer 审批待办发给审批人）；
+            为空时回退到 ``FEISHU_TASK_ASSIGNEE_OPEN_IDS``（未配置则用全部 HR 收件人）。
+    """
     settings = settings or get_settings()
-    assignees = resolve_task_assignees(settings)
-    if not assignees:
+    targets = list(assignees) if assignees else resolve_task_assignees(settings)
+    if not targets:
         return False, [], "未解析到任何待办负责人"
 
     create = creator or default_task_creator
     ok_any = False
     errors: list[str] = []
-    for assignee in assignees:
+    for assignee in targets:
         try:
             ok, err = create(assignee, summary, description, settings)
         except Exception as exc:  # noqa: BLE001 - 单人失败不拖垮整体
@@ -1052,7 +1058,7 @@ def create_tasks(
             ok_any = True
         else:
             errors.append(f"{assignee}: {err}")
-    return ok_any, assignees, "; ".join(errors)
+    return ok_any, targets, "; ".join(errors)
 
 
 def build_screening_task(

@@ -15,6 +15,7 @@ from app.db.models.offer import Offer
 from app.services.feishu_notify import (
     build_button,
     build_card,
+    create_tasks,
     default_card_sender,
     resolve_recipients,
 )
@@ -209,6 +210,94 @@ def resolve_targets(
     return merged, err
 
 
+# 需要额外建飞书待办的事件（卡片容易被消息刷过去，待办会留在待办列表里）
+_TASK_EVENTS = (EVENT_PENDING_APPROVAL, EVENT_SENT, EVENT_ACCEPTED)
+
+
+def build_offer_task(
+    event: str, offer: Offer, *, link: str = "", settings: Settings | None = None
+) -> tuple[str, str] | None:
+    """按事件构造飞书待办（标题, 描述）；该事件不需要待办时返回 None。
+
+    - 待审批 → 审批人：「请审批 XX 的 Offer」
+    - 已批准 → HR：「把 Offer 链接发给 XX」
+    - 已接受 → HR / 店长：「安排 XX 入职（报到日 Y）」
+    """
+    if event not in _TASK_EVENTS:
+        return None
+
+    report_date = offer.report_date.isoformat() if offer.report_date else "—"
+    base_lines = [
+        f"候选人：{offer.candidate_name or '—'}",
+        f"岗位：{offer.job_title or '—'}",
+        f"报到门店：{offer.store_name or '—'}",
+        f"拟报到日期：{report_date}",
+        f"试用期：{offer.probation_days} 天",
+    ]
+
+    if event == EVENT_PENDING_APPROVAL:
+        title = f"【待审批】「{offer.candidate_name}」的 Offer · {offer.job_title or ''}".strip(" ·")
+        desc = "\n".join(
+            [
+                *base_lines,
+                "",
+                "请在飞书审批卡片上点「同意 / 驳回」，或登录后台「Offer / 入职」页处理。",
+            ]
+        )
+        return title, desc
+
+    if event == EVENT_SENT:
+        title = f"【待发送】把 Offer 链接发给「{offer.candidate_name}」"
+        lines = [*base_lines, ""]
+        if link:
+            lines.append(f"候选人确认链接：{link}")
+        lines.append("请把链接（或卡片里的转发话术）发给候选人，并留意其确认结果。")
+        return title, "\n".join(lines)
+
+    # EVENT_ACCEPTED
+    title = f"【待入职】「{offer.candidate_name}」已接受 Offer（{report_date} 报到）"
+    desc = "\n".join(
+        [
+            *base_lines,
+            "",
+            f"请在报到日（{report_date}）之后，到后台「Offer / 入职」页标记「已报到 / 未报到」。",
+        ]
+    )
+    return title, desc
+
+
+def _create_offer_task(
+    event: str,
+    offer: Offer,
+    targets: list[str],
+    settings: Settings,
+    *,
+    link: str = "",
+    creator=None,
+) -> dict | None:
+    """为关键事件创建飞书待办（失败只记日志，不影响卡片与业务流转）。
+
+    Returns:
+        ``None`` 表示该事件不需要待办；否则返回 ``{"status", "assignees", "reason"}``。
+    """
+    if not settings.feishu_task_enabled:
+        return {"status": "skipped", "reason": "待办开关关闭（FEISHU_TASK_ENABLED=false）"}
+
+    built = build_offer_task(event, offer, link=link, settings=settings)
+    if built is None:
+        return None
+
+    title, desc = built
+    ok, assignees, err = create_tasks(
+        title, desc, settings=settings, assignees=targets, creator=creator
+    )
+    if ok:
+        logger.info("Offer 待办已创建 event=%s assignees=%s", event, assignees)
+    else:
+        logger.warning("Offer 待办创建失败 event=%s：%s", event, err)
+    return {"status": "created" if ok else "failed", "assignees": assignees, "reason": err}
+
+
 def _send_card_to(
     open_ids: list[str],
     card: dict,
@@ -241,6 +330,7 @@ def notify_offer_event(
     copy_text: str = "",
     actor: str = "",
     dry_run: bool = False,
+    task_creator=None,
 ) -> dict:
     """推送 Offer 事件卡片（尽力而为，返回结果摘要）。
 
@@ -270,9 +360,16 @@ def notify_offer_event(
         return {"status": "dry_run", "event": event, "recipients": targets, "reason": ""}
 
     ok, err = _send_card_to(targets, card, s, sender)
-    return {
+    result = {
         "status": "sent" if ok else "failed",
         "event": event,
         "recipients": targets,
         "reason": err,
     }
+    # 关键事件同时建飞书待办（与卡片同批收件人：待审批→审批人，已批准→HR，已接受→HR∪店长）
+    task_result = _create_offer_task(
+        event, offer, targets, s, link=link, creator=task_creator
+    )
+    if task_result is not None:
+        result["task"] = task_result
+    return result

@@ -52,6 +52,8 @@ def _settings(**kw) -> Settings:
     """
     base = dict(
         feishu_offer_notify_enabled=True,
+        # 默认关闭待办，避免单测真的调飞书创建任务；待办用例单独传 feishu_task_enabled=True + 假 creator
+        feishu_task_enabled=False,
         feishu_hr_open_ids="ou_hr1,ou_hr2",
         feishu_hr_department_ids="",
         offer_approver_open_ids="ou_boss",
@@ -283,3 +285,134 @@ def test_notify_unknown_event_skipped():
     res = on.notify_offer_event("nope", _offer(), settings=_settings(), sender=rec)
     assert res["status"] == "skipped"
     assert rec.calls == []
+
+
+# ── 飞书待办（审批 + HR 跟进）────────────────────────────────
+class _TaskRecorder:
+    """记录待办创建调用的假 creator（签名对齐 TaskCreator）。"""
+
+    def __init__(self, ok=True):
+        self.calls = []
+        self.ok = ok
+
+    def __call__(self, assignee, summary, description, settings):
+        self.calls.append((assignee, summary, description))
+        return self.ok, "" if self.ok else "模拟失败"
+
+
+def test_build_task_for_pending_approval():
+    title, desc = on.build_offer_task(
+        on.EVENT_PENDING_APPROVAL, _offer(status="pending_approval")
+    )
+    assert "待审批" in title
+    assert "张三" in title
+    assert "同意 / 驳回" in desc
+
+
+def test_build_task_for_sent_includes_link():
+    title, desc = on.build_offer_task(
+        on.EVENT_SENT, _offer(status="sent"), link="https://x/o/tok"
+    )
+    assert "待发送" in title
+    assert "https://x/o/tok" in desc
+
+
+def test_build_task_for_accepted_includes_report_date():
+    title, desc = on.build_offer_task(on.EVENT_ACCEPTED, _offer(status="accepted"))
+    assert "待入职" in title
+    assert "2026-10-20" in title
+    assert "已报到 / 未报到" in desc
+
+
+def test_build_task_none_for_events_without_task():
+    for event in (on.EVENT_DECLINED, on.EVENT_EXPIRED, on.EVENT_NO_SHOW, on.EVENT_REJECTED):
+        assert on.build_offer_task(event, _offer()) is None
+
+
+def test_notify_creates_task_for_approver():
+    """待审批：卡片与待办都只发给审批人。"""
+    rec = _Recorder()
+    task = _TaskRecorder()
+    res = on.notify_offer_event(
+        on.EVENT_PENDING_APPROVAL,
+        _offer(status="pending_approval"),
+        settings=_settings(feishu_task_enabled=True),
+        sender=rec,
+        task_creator=task,
+    )
+    assert res["status"] == "sent"
+    assert res["task"]["status"] == "created"
+    assert [c[0] for c in task.calls] == ["ou_boss"]
+    assert "待审批" in task.calls[0][1]
+
+
+def test_notify_creates_tasks_for_hr_and_manager_on_accept():
+    rec = _Recorder()
+    task = _TaskRecorder()
+    res = on.notify_offer_event(
+        on.EVENT_ACCEPTED,
+        _offer(status="accepted"),
+        settings=_settings(feishu_task_enabled=True),
+        sender=rec,
+        task_creator=task,
+    )
+    assert [c[0] for c in task.calls] == ["ou_hr1", "ou_hr2", "ou_mgr"]
+    assert res["task"]["status"] == "created"
+
+
+def test_notify_creates_task_for_hr_on_sent():
+    rec = _Recorder()
+    task = _TaskRecorder()
+    on.notify_offer_event(
+        on.EVENT_SENT,
+        _offer(status="sent"),
+        settings=_settings(feishu_task_enabled=True),
+        sender=rec,
+        link="https://x/o/tok",
+        task_creator=task,
+    )
+    assert [c[0] for c in task.calls] == ["ou_hr1", "ou_hr2"]
+    assert "待发送" in task.calls[0][1]
+
+
+def test_notify_task_skipped_when_disabled():
+    rec = _Recorder()
+    task = _TaskRecorder()
+    res = on.notify_offer_event(
+        on.EVENT_ACCEPTED,
+        _offer(status="accepted"),
+        settings=_settings(feishu_task_enabled=False),
+        sender=rec,
+        task_creator=task,
+    )
+    assert res["task"]["status"] == "skipped"
+    assert task.calls == []
+
+
+def test_notify_no_task_key_for_declined():
+    rec = _Recorder()
+    task = _TaskRecorder()
+    res = on.notify_offer_event(
+        on.EVENT_DECLINED,
+        _offer(status="declined"),
+        settings=_settings(feishu_task_enabled=True),
+        sender=rec,
+        task_creator=task,
+    )
+    assert "task" not in res
+    assert task.calls == []
+
+
+def test_notify_task_failure_does_not_break_card_result():
+    """待办创建失败不影响卡片结果（仍返回 sent）。"""
+    rec = _Recorder()
+    task = _TaskRecorder(ok=False)
+    res = on.notify_offer_event(
+        on.EVENT_ACCEPTED,
+        _offer(status="accepted"),
+        settings=_settings(feishu_task_enabled=True),
+        sender=rec,
+        task_creator=task,
+    )
+    assert res["status"] == "sent"
+    assert res["task"]["status"] == "failed"

@@ -33,6 +33,10 @@ PASS = "✅"
 FAIL = "❌"
 INFO = "·"
 
+# 自检专用的后台账号（管理端已启用登录鉴权，自检需先登录）
+SMOKE_USERNAME = "__smoke_offer__"
+SMOKE_PASSWORD = "SmokeOffer#2026!Test"
+
 
 class Smoke:
     """极简断言与结果统计。"""
@@ -57,6 +61,37 @@ class Smoke:
 
     def on_cleanup(self, fn) -> None:
         self._restore.append(fn)
+
+
+def _login_for_smoke(db, client) -> None:
+    """为自检建立管理员会话。
+
+    管理端已启用「账号密码登录 + 会话 Cookie」鉴权（迁移 0011_admin_auth），
+    因此自检必须先用一个固定账号登录，并把 session / csrf 写进 TestClient。
+    """
+    from app.db.models.admin_user import ADMIN_ROLE, AdminUser
+    from app.services.auth import (
+        CSRF_COOKIE_NAME,
+        CSRF_HEADER_NAME,
+        SESSION_COOKIE_NAME,
+        create_session,
+        create_user,
+    )
+
+    user = db.query(AdminUser).filter(AdminUser.username == SMOKE_USERNAME).first()
+    if user is None:
+        user = create_user(
+            db,
+            username=SMOKE_USERNAME,
+            password=SMOKE_PASSWORD,
+            role=ADMIN_ROLE,
+            display_name="Offer 自检账号",
+            created_by="smoke",
+        )
+    token, csrf, _ = create_session(db, user)
+    client.cookies.set(SESSION_COOKIE_NAME, token)
+    client.cookies.set(CSRF_COOKIE_NAME, csrf)
+    client.headers[CSRF_HEADER_NAME] = csrf
 
 
 def _pick_summary(db):
@@ -112,6 +147,7 @@ def main() -> int:
     smoke = Smoke()
     db = SessionLocal()
     client = TestClient(app)
+    _login_for_smoke(db, client)  # 管理端需登录：先建立管理员会话
     created_names: list[str] = []
 
     def names(tag: str) -> str:
