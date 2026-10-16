@@ -13,7 +13,7 @@ const request = axios.create({
 const CSRF_COOKIE = 'ia_csrf'
 
 /** 读取非 HttpOnly 的 CSRF Cookie（后端 double-submit 方案的另一半）。 */
-function readCsrfToken() {
+export function readCsrfToken() {
   const match = document.cookie.match(new RegExp('(?:^|;\\s*)' + CSRF_COOKIE + '=([^;]*)'))
   return match ? decodeURIComponent(match[1]) : ''
 }

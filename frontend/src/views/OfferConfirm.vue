@@ -20,7 +20,7 @@
         <div class="letter">
           <h1 class="letter-title">{{ letter.title || '录用通知书' }}</h1>
 
-          <p class="letter-to">{{ ctx.candidate_name }}：</p>
+          <p class="letter-to">{{ letter.candidate_name || ctx.candidate_name }}：</p>
 
           <p class="letter-p">您好！您已通过面试，正式被我司录用。</p>
 
