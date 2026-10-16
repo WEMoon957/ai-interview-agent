@@ -109,6 +109,13 @@ class Settings(BaseSettings):
     # 店长 open_id 兜底：未解析到店长 open_id 时，轮询按此所有者搜索（先用发起人自己的 open_id 联调）
     feishu_minutes_default_owner_open_id: str = ""
 
+    # ── 长连接（卡片按钮回调）────────────────────────────
+    # 开启后审批人可直接在飞书卡片上点「同意 / 驳回」完成审批。
+    # 走飞书 SDK 长连接（WebSocket）接收回调，**无需公网 HTTPS 域名**。
+    # 前置条件：开发者后台「事件订阅」选择「使用长连接接收回调」并订阅
+    # card.action.trigger，否则按钮点击不会送达本服务。
+    feishu_longconn_enabled: bool = False
+
     # ── Offer → 入职闭环（第⑤阶段）──────────────────────────────
     # 状态卡片推送总开关（关闭后所有 Offer 通知静默，业务主流程不受影响）
     feishu_offer_notify_enabled: bool = True

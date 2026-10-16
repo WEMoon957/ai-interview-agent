@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.db.models.admin_user import ADMIN_ROLE, HR_ROLE
 from app.exceptions import register_exception_handlers
 from app.middleware.security import AdminWriteAuditMiddleware, SecurityHeadersMiddleware
+from app.services.feishu_longconn import diagnose_longconn, start_long_connection
 from app.services.feishu_notify import diagnose_notify_config
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,15 @@ async def lifespan(app: FastAPI):
     # 飞书通知配置自检：把「会导致推送静默失败」的配置问题在启动时喊出来
     for warning in diagnose_notify_config(settings):
         logger.warning("飞书通知配置告警：%s", warning)
+
+    # 长连接回调自检 + 启动：让审批人能直接在卡片上点「同意 / 驳回」。
+    # 未启用时静默跳过；启动失败只记日志，绝不拖垮服务。
+    for warning in diagnose_longconn(settings):
+        logger.warning("飞书长连接告警：%s", warning)
+    try:
+        start_long_connection(settings)
+    except Exception:  # noqa: BLE001 - 长连接不可用不应影响服务启动
+        logger.exception("飞书长连接启动失败（服务继续运行，卡片按钮暂不可用）")
 
     if settings.auto_create_tables:
         from app.db.base import Base
