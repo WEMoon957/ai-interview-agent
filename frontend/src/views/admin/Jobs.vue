@@ -23,7 +23,7 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="招聘流程" width="150">
+        <el-table-column label="简历筛选方式" width="150">
           <template #default="{ row }">
             <el-switch
               :model-value="row.skip_screening"
@@ -58,6 +58,11 @@
             <el-button size="small" type="danger" text @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
+        <template #empty>
+          <el-empty description="还没有岗位。点右上角「新建岗位」开始招人">
+            <el-button type="primary" @click="openCreate">新建岗位</el-button>
+          </el-empty>
+        </template>
       </el-table>
 
       <el-alert
@@ -65,7 +70,7 @@
         :closable="false"
         show-icon
         style="margin-top: 12px"
-        title="「免初筛」岗位：在『简历初筛』页上传简历文件夹后，不做 AI 打分，直接为每位候选人生成 AI 面试链接。；「停招」岗位无法再发起新的 Offer。"
+        title="「免初筛」：上传简历后跳过 AI 打分，直接为每位候选人生成面试链接；「停招」：不能再为该岗位发起新的录用通知。"
       />
     </el-card>
 
@@ -77,7 +82,7 @@
     >
       <el-form :model="form" label-width="90px">
         <el-form-item label="岗位名称" required>
-          <el-input v-model="form.title" placeholder="如：高级后端工程师" />
+          <el-input v-model="form.title" placeholder="如：前厅服务员 / 炒锅师傅 / 店长" />
         </el-form-item>
         <el-form-item label="JD 描述">
           <el-input

@@ -13,7 +13,7 @@
         </el-menu-item>
         <el-menu-item v-if="canSee('company')" index="/console/company">
           <el-icon><Reading /></el-icon>
-          <span>公司文化</span>
+          <span>公司介绍</span>
         </el-menu-item>
         <el-menu-item v-if="canSee('templates')" index="/console/templates">
           <el-icon><Document /></el-icon>
@@ -25,7 +25,7 @@
         </el-menu-item>
         <el-menu-item v-if="canSee('sessions')" index="/console/sessions">
           <el-icon><User /></el-icon>
-          <span>面试会话</span>
+          <span>AI 面试记录</span>
         </el-menu-item>
         <el-menu-item index="/console/offline">
           <el-icon><OfficeBuilding /></el-icon>
@@ -41,7 +41,7 @@
         </el-menu-item>
         <el-menu-item v-if="canSee('offers')" index="/console/offers">
           <el-icon><Ticket /></el-icon>
-          <span>Offer / 入职</span>
+          <span>录用 / 入职</span>
         </el-menu-item>
         <el-menu-item v-if="canSee('accounts')" index="/console/accounts">
           <el-icon><Setting /></el-icon>

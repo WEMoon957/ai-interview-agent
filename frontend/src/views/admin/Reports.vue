@@ -6,8 +6,8 @@
           <span>评分报告</span>
           <el-select
             v-model="selectedSessionId"
-            placeholder="选择面试会话"
-            style="width: 320px"
+            placeholder="选择一场已完成的面试"
+            style="width: min(320px, 60vw)"
             filterable
             @change="loadReport"
           >
@@ -21,7 +21,17 @@
         </div>
       </template>
 
-      <el-empty v-if="!report" description="请选择一个已完成的面试会话查看报告" />
+      <!-- 区分「没选」和「根本没有已完成的面试」，避免 HR 误以为自己操作错了 -->
+      <el-empty
+        v-if="!report && finishedSessions.length"
+        description="请在上方选择一场面试，查看该候选人的评分报告"
+      />
+      <el-empty
+        v-else-if="!report && !finishedSessions.length"
+        description="还没有已完成的面试。候选人答完题后，这里会自动生成评分报告"
+      >
+        <el-button @click="$router.push('/console/sessions')">去 AI 面试记录查看进度</el-button>
+      </el-empty>
 
       <template v-else>
         <!-- 综合分 + 等级 -->
@@ -67,7 +77,7 @@
           <el-collapse-item
             v-for="(e, i) in report.evaluations"
             :key="i"
-            :title="`第 ${i + 1} 次作答 · ${e.question_id}`"
+            :title="`第 ${i + 1} 次作答`"
           >
             <el-descriptions :column="1" border>
               <el-descriptions-item label="评分">

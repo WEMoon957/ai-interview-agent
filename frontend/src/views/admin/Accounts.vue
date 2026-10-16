@@ -77,6 +77,11 @@
             </el-button>
           </template>
         </el-table-column>
+        <template #empty>
+          <el-empty description="还没有账号。点右上角「新建账号」为 HR 或店长开通登录账号">
+            <el-button type="primary" @click="openCreate">新建账号</el-button>
+          </el-empty>
+        </template>
       </el-table>
     </el-card>
 

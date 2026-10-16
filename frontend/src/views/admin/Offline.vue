@@ -38,7 +38,7 @@
         </el-table-column>
         <el-table-column label="操作" width="220">
           <template #default="{ row }">
-            <el-button size="small" type="primary" @click="openScheduleFor(row)">约线下面</el-button>
+            <el-button size="small" type="primary" @click="openScheduleFor(row)">约线下复试</el-button>
             <el-button size="small" @click="quickScore(row)">直接打分</el-button>
           </template>
         </el-table-column>
@@ -91,15 +91,15 @@
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="妙记" min-width="140">
+        <el-table-column label="面试录音" min-width="140">
           <template #default="{ row }">
             <el-link v-if="row.minutes_url" :href="row.minutes_url" target="_blank" type="primary">
-              打开妙记
+              打开录音
             </el-link>
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="妙记转写" width="160">
+        <el-table-column label="录音转文字" width="160">
           <template #default="{ row }">
             <el-tag :type="transcriptStatusType(row.transcript_status)" size="small" effect="plain">
               {{ transcriptStatusText(row.transcript_status) }}
@@ -111,7 +111,7 @@
               type="primary"
               @click="openBindMinutes(row)"
             >
-              绑定
+              粘贴链接
             </el-button>
           </template>
         </el-table-column>
@@ -377,33 +377,33 @@
         </el-form-item>
         <el-form-item label="录音方式">
           <div class="tip">
-            录音走飞书妙记：建档后系统会给出短码，让店长在飞书妙记录音、把标题填成短码，录音保留在飞书，服务器不保存音频。
+            录音保存在飞书：建档后系统会给出一个短码，店长在飞书妙记录音时把标题填成这个短码，系统会自动识别并生成参考分。
           </div>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="walkInVisible = false">取消</el-button>
-        <el-button :loading="saving" @click="submitWalkIn(false)">仅建档</el-button>
+        <el-button :loading="saving" @click="submitWalkIn(false)">保存，稍后打分</el-button>
         <el-button type="primary" :loading="saving" @click="submitWalkIn(true)">
-          建档并打分
+          保存并立即打分
         </el-button>
       </template>
     </el-dialog>
 
     <!-- 绑定飞书妙记（录音节点降级通道）：店长粘贴妙记链接，立即拉逐字稿 + 评分 -->
-    <el-dialog v-model="bindVisible" title="绑定飞书妙记" width="560px">
+    <el-dialog v-model="bindVisible" title="粘贴面试录音链接" width="560px">
       <el-alert
         type="info"
         :closable="false"
         show-icon
         style="margin-bottom: 14px"
-        title="店长在飞书妙记录完音后，把妙记链接粘贴到这里，系统会立即拉取逐字稿并生成 AI 参考分。"
+        title="店长在飞书录完音后，把录音链接粘贴到这里，系统会自动转成文字并生成 AI 参考分。"
       />
       <el-form label-width="90px">
         <el-form-item label="候选人">
           <span>{{ bindTarget?.candidate_name }}（{{ bindTarget?.job_title }}）</span>
         </el-form-item>
-        <el-form-item label="妙记链接" required>
+        <el-form-item label="录音链接" required>
           <el-input
             v-model="bindForm.minutesUrl"
             placeholder="粘贴妙记链接，如 https://xxx.feishu.cn/minutes/obcnxxx"

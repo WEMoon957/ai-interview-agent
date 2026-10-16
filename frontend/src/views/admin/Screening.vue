@@ -16,10 +16,10 @@
             </el-select>
             <el-tag v-if="isDirect" type="warning" effect="dark">免初筛 · 直通面试</el-tag>
             <el-button v-if="!isDirect" :loading="notifying" @click="pushToHr">
-              重新推送榜单
+              重新推送给 HR
             </el-button>
             <el-button type="primary" @click="openUpload">
-              {{ isDirect ? '上传简历并生成面试链接' : '上传岗位文件夹' }}
+              {{ isDirect ? '上传简历并生成面试链接' : '上传简历文件夹' }}
             </el-button>
           </div>
         </div>
@@ -40,7 +40,7 @@
         :closable="false"
         show-icon
         style="margin-bottom: 12px"
-        title="初筛完成后会自动推送给 HR：达到门槛（默认 ≥65）的候选人会生成 AI 面试链接，随卡片一起发出，并同步创建飞书待办 —— 无需手动点击。"
+        title="初筛完成后会自动推送给 HR：分数达到门槛的候选人会生成 AI 面试链接，以飞书消息发出，并同步创建飞书待办 —— 无需手动点击。"
       />
 
       <!-- 上传结果小结 -->
@@ -59,7 +59,7 @@
         show-icon
         style="margin-bottom: 12px"
         :title="`HR 飞书推送失败：${uploadResult?.notify?.reason || '未知原因'}`"
-        description="业务数据已正常入库，不影响使用。常见原因：服务器未把推送改为 api 传输、或 PUBLIC_BASE_URL 仍是本机地址。"
+        description="数据已正常保存，不影响使用。如多次失败，请点上方「重新推送给 HR」重试，或联系技术同事。"
       />
 
       <el-table

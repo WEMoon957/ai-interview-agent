@@ -3,10 +3,18 @@
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
-          <span>面试会话</span>
+          <span>AI 面试记录</span>
           <el-button type="primary" @click="openCreate">创建面试</el-button>
         </div>
       </template>
+
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+        title="走过 AI 面试的候选人都会出现在这里。要批量邀请候选人，建议到「简历初筛」上传简历文件夹。"
+      />
 
       <el-table :data="sessions" v-loading="loading" stripe>
         <el-table-column label="候选人" min-width="120">
@@ -24,7 +32,7 @@
         </el-table-column>
         <el-table-column label="答题入口" min-width="220">
           <template #default="{ row }">
-            <el-button size="small" type="primary" @click="openInterview(row)">打开面试页</el-button>
+            <el-button size="small" type="primary" @click="openInterview(row)">预览答题页</el-button>
             <el-button size="small" @click="copyLink(row)">复制链接</el-button>
           </template>
         </el-table-column>
@@ -34,6 +42,12 @@
             <el-button size="small" type="danger" text @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
+        <template #empty>
+          <el-empty description="还没有面试记录。点右上角「创建面试」为候选人单独发起，或到「简历初筛」批量邀请">
+            <el-button type="primary" @click="openCreate">创建面试</el-button>
+            <el-button @click="$router.push('/console/screening')">去简历初筛</el-button>
+          </el-empty>
+        </template>
       </el-table>
     </el-card>
 

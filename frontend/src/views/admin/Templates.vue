@@ -35,6 +35,11 @@
             <el-button size="small" type="danger" text @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
+        <template #empty>
+          <el-empty description="还没有面试模板。先创建岗位，再为岗位配置面试问题与评分维度">
+            <el-button type="primary" @click="openCreate">新建模板</el-button>
+          </el-empty>
+        </template>
       </el-table>
     </el-card>
 

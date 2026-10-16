@@ -53,7 +53,7 @@ const routes = [
         path: 'company',
         name: 'company',
         component: () => import('../views/admin/Company.vue'),
-        meta: { title: '公司文化', roles: ['admin', 'hr'] },
+        meta: { title: '公司介绍', roles: ['admin', 'hr'] },
       },
       {
         path: 'templates',
@@ -71,7 +71,7 @@ const routes = [
         path: 'sessions',
         name: 'sessions',
         component: () => import('../views/admin/Sessions.vue'),
-        meta: { title: '面试会话', roles: ['admin', 'hr'] },
+        meta: { title: 'AI 面试记录', roles: ['admin', 'hr'] },
       },
       {
         // 店长的核心工作台：三角色都可进
@@ -96,7 +96,7 @@ const routes = [
         path: 'offers',
         name: 'offers',
         component: () => import('../views/admin/Offers.vue'),
-        meta: { title: 'Offer / 入职', roles: ['admin', 'hr'] },
+        meta: { title: '录用 / 入职', roles: ['admin', 'hr'] },
       },
       {
         // 账号管理：建号/停用/重置密码/解锁，仅管理员
