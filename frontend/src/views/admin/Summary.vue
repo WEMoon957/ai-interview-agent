@@ -37,6 +37,16 @@
         @close="notifyIssues = []"
       />
 
+      <!-- 实时汇总不支持发起 Offer（数据未落库、无 summary_id），给出明确引导 -->
+      <el-alert
+        v-if="source === 'live'"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+        title="当前是「实时汇总」视图，数据尚未落库，无法发起 Offer。请先点右上角「生成 / 更新汇总落库」，再切换到「已落库快照」后操作。"
+      />
+
       <!-- 统计卡片 -->
       <div class="stats">
         <div class="stat"><div class="num">{{ rows.length }}</div><div class="label">候选人数</div></div>
@@ -102,11 +112,9 @@
         <el-table-column label="操作" width="130" fixed="right">
           <template #default="{ row }">
             <el-button
-              type="primary"
+              :type="canOffer(row) ? 'primary' : 'info'"
               size="small"
-              :disabled="!canOffer(row)"
-              :title="offerDisabledReason(row)"
-              @click="openOffer(row)"
+              @click="handleOfferClick(row)"
             >
               发起 Offer
             </el-button>
@@ -207,6 +215,16 @@ function offerDisabledReason(row) {
   const job = jobs.value.find((j) => j.id === row.job_id)
   if (job && job.is_active === false) return '该岗位已停招'
   return ''
+}
+
+function handleOfferClick(row) {
+  // 保持按钮可点击：不满足条件时直接弹出原因，避免「灰按钮不给理由」的困惑
+  const reason = offerDisabledReason(row)
+  if (reason) {
+    ElMessage.warning(reason)
+    return
+  }
+  openOffer(row)
 }
 
 function openOffer(row) {
