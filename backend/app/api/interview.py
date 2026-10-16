@@ -39,6 +39,21 @@ def _consent_payload(sess: InterviewSession) -> dict:
     }
 
 
+def _company_intro_payload(sess: InterviewSession) -> dict:
+    """候选人页面可展示的公司介绍（**完整文本，不截断**）。
+
+    背景：开场白里的公司介绍由 ``intro_for_opening`` 截断到 300 字（避免开场白过长），
+    但候选人应当能读到完整的公司简介 —— 因此这里额外返回原文供页面展示，
+    长简介不会再有"看不到后半段"的问题。
+    """
+    # getattr 兜底：测试桩对象与历史数据可能没有该字段
+    snapshot = getattr(sess, "company_profile_snapshot", None) or {}
+    return {
+        "content": (snapshot.get("content") or "").strip(),
+        "updated_at": snapshot.get("updated_at") or "",
+    }
+
+
 def _ensure_consent(sess: InterviewSession) -> None:
     """未同意协议时拒绝进入面试（服务端强校验，防止绕过前端门禁）。"""
     if sess.consent_agreed_at is None:
@@ -141,6 +156,7 @@ def get_context(token: str, db: Session = Depends(get_db)):
                 "progress": {"current": 0, "total": 0},
                 "status": "consent_required",
                 "consent": _consent_payload(sess),
+                "company_intro": _company_intro_payload(sess),
             }
         )
 
@@ -179,6 +195,7 @@ def get_context(token: str, db: Session = Depends(get_db)):
                 "progress": _progress(values, current_idx),
                 "status": "running",
                 "consent": _consent_payload(sess),
+                "company_intro": _company_intro_payload(sess),
             }
         )
 
@@ -194,6 +211,7 @@ def get_context(token: str, db: Session = Depends(get_db)):
                 "progress": {"current": total, "total": total},
                 "status": "finished",
                 "consent": _consent_payload(sess),
+                "company_intro": _company_intro_payload(sess),
             }
         )
 
@@ -208,6 +226,7 @@ def get_context(token: str, db: Session = Depends(get_db)):
             "progress": _progress(values, (interrupt_value or {}).get("current_idx", 0)),
             "status": "running",
             "consent": _consent_payload(sess),
+            "company_intro": _company_intro_payload(sess),
         }
     )
 

@@ -11,6 +11,12 @@
       </div>
     </div>
 
+    <!-- 公司介绍：完整展示（开场白里只带前 300 字，长简介会看不到后半段） -->
+    <details v-if="companyIntro" class="company-intro">
+      <summary>关于我们 · 点开查看完整公司介绍</summary>
+      <div class="company-intro-body">{{ companyIntro }}</div>
+    </details>
+
     <!-- 主体 -->
     <div class="interview-body">
       <!-- 加载中 -->
@@ -175,6 +181,8 @@ const answer = ref('')
 const submitting = ref(false)
 const lastType = ref('')
 const errorMsg = ref('')
+// 完整公司介绍（来自会话快照；开场白里只带前 300 字）
+const companyIntro = ref('')
 
 // 安全知情协议（未同意前不进入面试）
 const consentRequired = ref(false)
@@ -213,6 +221,8 @@ async function loadContext() {
   errorMsg.value = ''
   try {
     const data = await getInterviewContext(token)
+    // 公司介绍在「协议页」和「答题页」都要展示，因此在早退分支之前先赋值
+    companyIntro.value = data.company_intro?.content || ''
     if (data.status === 'consent_required') {
       // 未同意协议：仅展示协议页，不进入面试
       consentRequired.value = true
@@ -323,6 +333,40 @@ onMounted(loadContext)
   font-size: 13px;
   color: #6b7280;
   white-space: nowrap;
+}
+
+.company-intro {
+  margin: 0 16px 12px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 14px;
+}
+.company-intro summary {
+  cursor: pointer;
+  color: #2563eb;
+  font-weight: 500;
+  list-style: none;
+  user-select: none;
+}
+.company-intro summary::-webkit-details-marker {
+  display: none;
+}
+.company-intro summary::before {
+  content: '▸ ';
+}
+.company-intro[open] summary::before {
+  content: '▾ ';
+}
+.company-intro-body {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #e5e7eb;
+  color: #374151;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .interview-body {
