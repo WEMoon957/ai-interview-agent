@@ -29,6 +29,7 @@ from app.db.models.offer import Offer
 from app.db.models.summary import RecruitmentSummary
 from app.exceptions import BizError
 from app.services import offer as svc
+from app.services.offer_letter import build_letter
 from app.services.offer_notify import notify_offer_event
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,13 @@ def create_offer(payload: OfferCreate, db: Session = Depends(get_db)):
         job_title=payload.job_title,
         probation_days=payload.probation_days,
         note=payload.note,
+        # 录用通知书字段
+        work_location=payload.work_location,
+        contact_name=payload.contact_name,
+        contact_phone=payload.contact_phone,
+        probation_salary=payload.probation_salary,
+        regular_salary=payload.regular_salary,
+        report_time=payload.report_time,
     )
     db.commit()
     db.refresh(row)
@@ -165,6 +173,13 @@ def update_offer(offer_id: str, payload: OfferUpdate, db: Session = Depends(get_
         report_date=_parse_date(payload.report_date, "report_date") if payload.report_date else None,
         probation_days=payload.probation_days,
         note=payload.note,
+        # 录用通知书字段
+        work_location=payload.work_location,
+        contact_name=payload.contact_name,
+        contact_phone=payload.contact_phone,
+        probation_salary=payload.probation_salary,
+        regular_salary=payload.regular_salary,
+        report_time=payload.report_time,
     )
     db.commit()
     db.refresh(row)
@@ -307,7 +322,8 @@ def get_offer_context(token: str, db: Session = Depends(get_db)):
     row = svc.get_offer_by_token(db, token)
     svc.expire_due_offers(db)
     db.refresh(row)
-    return ok(_candidate_out(row))
+    # 附上《录用通知书》完整文案（固定文案 + HR 填写字段），候选人页直接排版
+    return ok({**_candidate_out(row), "letter": build_letter(row)})
 
 
 @candidate_router.post("/{token}/accept")

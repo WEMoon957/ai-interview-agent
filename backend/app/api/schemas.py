@@ -260,7 +260,14 @@ class OfferCreate(BaseModel):
     report_date: str = Field(description="拟报到日期（YYYY-MM-DD）")
     job_title: str | None = Field(default=None, description="岗位名（留空取岗位当前名称）")
     probation_days: int = Field(default=30, ge=0, description="试用期天数")
-    note: str = Field(default="", description="备注（薪资等敏感信息不入库，需要时可自由填写）")
+    note: str = Field(default="", description="备注")
+    # ── 录用通知书字段（候选人确认页 /o/{token} 展示）────────────
+    work_location: str = Field(default="", description="工作地点")
+    contact_name: str = Field(default="", description="联系人姓名")
+    contact_phone: str = Field(default="", description="联系人电话")
+    probation_salary: str = Field(default="", description="试用期薪资（文本，如「固定 8500 元」）")
+    regular_salary: str = Field(default="", description="转正后薪资（文本，如「10000 元/月」）")
+    report_time: str = Field(default="", description="报到具体时间（如「上午 9:00」）")
 
 
 class OfferUpdate(BaseModel):
@@ -271,6 +278,13 @@ class OfferUpdate(BaseModel):
     report_date: str | None = Field(default=None, description="拟报到日期（YYYY-MM-DD）")
     probation_days: int | None = Field(default=None, ge=0, description="试用期天数")
     note: str | None = Field(default=None, description="备注")
+    # ── 录用通知书字段 ────────────────────────────────
+    work_location: str | None = Field(default=None, description="工作地点")
+    contact_name: str | None = Field(default=None, description="联系人姓名")
+    contact_phone: str | None = Field(default=None, description="联系人电话")
+    probation_salary: str | None = Field(default=None, description="试用期薪资")
+    regular_salary: str | None = Field(default=None, description="转正后薪资")
+    report_time: str | None = Field(default=None, description="报到具体时间")
 
 
 class OfferApprove(BaseModel):

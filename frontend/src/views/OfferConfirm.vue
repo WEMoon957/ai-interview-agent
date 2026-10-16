@@ -15,38 +15,61 @@
         <p class="hint">如有疑问，请联系招聘 HR。</p>
       </div>
 
-      <!-- 待确认 -->
+      <!-- 待确认：正式《录用通知书》版式（固定文案 + HR 填写字段由后端组装） -->
       <template v-else-if="status === 'sent'">
-        <div class="brand">{{ ctx.company_name || '招聘' }}</div>
-        <h1 class="title">🎉 恭喜！您的面试已通过</h1>
-        <p class="subtitle">我们诚挚邀请您加入</p>
+        <div class="letter">
+          <h1 class="letter-title">{{ letter.title || '录用通知书' }}</h1>
 
-        <div class="info-card">
-          <div class="info-row">
-            <span class="label">岗位</span>
-            <span class="value">{{ ctx.job_title || '—' }}</span>
+          <p class="letter-to">{{ ctx.candidate_name }}：</p>
+
+          <p class="letter-p">您好！您已通过面试，正式被我司录用。</p>
+
+          <p class="letter-p">
+            入职岗位：{{ letter.job_title || ctx.job_title || '—' }}
+            <template v-if="letter.work_location">
+              <br />工作地点：{{ letter.work_location }}
+            </template>
+            <template v-if="letter.contact_name || letter.contact_phone">
+              <br />联系人 {{ letter.contact_name
+              }}<template v-if="letter.contact_phone"> 电话{{ letter.contact_phone }}</template>
+            </template>
+          </p>
+
+          <p class="letter-p">
+            {{ letter.probation_phrase }}<template v-if="letter.probation_salary"
+              >，试用期薪资为{{ letter.probation_salary }}</template
+            >{{ letter.probation_suffix }}
+            <template v-if="letter.regular_salary">
+              <br />转正后综合薪资{{ letter.regular_salary }}
+            </template>
+            <template v-if="letter.report_date">
+              <br />请于{{ letter.report_date
+              }}<template v-if="letter.report_time">{{ letter.report_time }}</template>报到
+            </template>
+          </p>
+
+          <div v-if="letter.materials && letter.materials.length" class="letter-materials">
+            <p class="materials-title">报到时请携带以下资料：</p>
+            <p class="materials-list">
+              <span v-for="(m, i) in letter.materials" :key="i"
+                >{{ i + 1 }}.{{ m }}<template v-if="i < letter.materials.length - 1">　</template></span
+              >
+            </p>
           </div>
-          <div class="info-row">
-            <span class="label">报到门店</span>
-            <span class="value">{{ ctx.store_name || '—' }}</span>
-          </div>
-          <div class="info-row">
-            <span class="label">拟报到日期</span>
-            <span class="value">{{ ctx.report_date || '待定' }}</span>
-          </div>
-          <div class="info-row">
-            <span class="label">试用期</span>
-            <span class="value">{{ ctx.probation_days }} 天</span>
-          </div>
-          <div v-if="ctx.note" class="info-row">
-            <span class="label">备注</span>
-            <span class="value">{{ ctx.note }}</span>
+
+          <p class="letter-p">{{ letter.legal_note }}</p>
+          <p v-if="letter.deadline" class="letter-p">
+            请于{{ letter.deadline }}前回复确认，逾期视为放弃。
+          </p>
+
+          <div class="letter-sign">
+            <p>{{ letter.company_name }}</p>
+            <p>日期：{{ letter.letter_date }}</p>
           </div>
         </div>
 
-        <div class="deadline">
-          请在 <strong>{{ ctx.deadline_text }}</strong> 前确认是否接受
-          <span v-if="remainText" class="remain">· {{ remainText }}</span>
+        <div v-if="remainText" class="deadline">
+          确认剩余时间：<span class="remain">{{ remainText }}</span>
         </div>
 
         <div class="actions">
@@ -58,8 +81,8 @@
           </button>
         </div>
 
-        <p v-if="ctx.hr_contact_phone" class="contact">
-          如有疑问，请联系招聘 HR：{{ ctx.hr_contact_phone }}
+        <p v-if="letter.contact_phone" class="contact">
+          如有疑问，请联系 {{ letter.contact_name || '招聘 HR' }}：{{ letter.contact_phone }}
         </p>
       </template>
 
@@ -126,6 +149,8 @@ const token = route.params.token
 const loading = ref(true)
 const errorMsg = ref('')
 const ctx = ref({})
+// 《录用通知书》完整文案（由后端 assemble：固定文案 + HR 填写字段）
+const letter = ref({})
 const status = ref('')
 const submitting = ref(false)
 const showDecline = ref(false)
@@ -166,6 +191,7 @@ async function load() {
   try {
     const data = await getOfferContext(token)
     ctx.value = data || {}
+    letter.value = data?.letter || {}
     status.value = data?.status || ''
   } catch (err) {
     errorMsg.value = err?.message || '链接无效或已失效'
@@ -232,6 +258,63 @@ onUnmounted(() => {
   padding: 32px 28px;
   box-sizing: border-box;
   height: fit-content;
+}
+
+/* ── 录用通知书版式 ───────────────────────────── */
+.letter {
+  background: #fff;
+  font-size: 15px;
+  line-height: 2;
+  color: #1f2937;
+}
+
+.letter-title {
+  text-align: center;
+  font-size: 23px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  color: #111827;
+  margin: 4px 0 22px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #1f2937;
+}
+
+.letter-to {
+  font-weight: 600;
+  font-size: 16px;
+  color: #111827;
+  margin: 0 0 10px;
+}
+
+.letter-p {
+  margin: 0 0 12px;
+  text-align: justify;
+  line-height: 2;
+}
+
+.letter-materials {
+  margin: 0 0 12px;
+}
+
+.materials-title {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+.materials-list {
+  margin: 0;
+  line-height: 2;
+  text-align: justify;
+}
+
+.letter-sign {
+  margin-top: 26px;
+  text-align: right;
+  line-height: 2;
+}
+
+.letter-sign p {
+  margin: 0;
 }
 
 .brand {

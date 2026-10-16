@@ -28,6 +28,27 @@
       <el-form-item label="试用期(天)">
         <el-input-number v-model="form.probation_days" :min="0" :max="365" />
       </el-form-item>
+
+      <el-divider content-position="left">录用通知书内容（候选人可见）</el-divider>
+
+      <el-form-item label="工作地点">
+        <el-input v-model="form.work_location" placeholder="如：昆明市西山区万达北塔 2507" />
+      </el-form-item>
+      <el-form-item label="联系人">
+        <el-input v-model="form.contact_name" placeholder="如：方玺" />
+      </el-form-item>
+      <el-form-item label="联系电话">
+        <el-input v-model="form.contact_phone" placeholder="如：17702348593" />
+      </el-form-item>
+      <el-form-item label="试用期薪资">
+        <el-input v-model="form.probation_salary" placeholder="如：固定 8500 元" />
+      </el-form-item>
+      <el-form-item label="转正后薪资">
+        <el-input v-model="form.regular_salary" placeholder="如：10000 元/月" />
+      </el-form-item>
+      <el-form-item label="报到时间">
+        <el-input v-model="form.report_time" placeholder="如：上午 9:00" />
+      </el-form-item>
       <el-form-item label="备注">
         <el-input
           v-model="form.note"
@@ -79,6 +100,13 @@ const form = ref({
   report_date: '',
   probation_days: 30,
   note: '',
+  // 录用通知书字段（候选人确认页展示）
+  work_location: '',
+  contact_name: '',
+  contact_phone: '',
+  probation_salary: '',
+  regular_salary: '',
+  report_time: '',
 })
 
 watch(
@@ -93,6 +121,13 @@ watch(
       report_date: c.report_date || '',
       probation_days: c.probation_days ?? 30,
       note: c.note || '',
+      // 录用通知书字段（编辑时回填）
+      work_location: c.work_location || '',
+      contact_name: c.contact_name || '',
+      contact_phone: c.contact_phone || '',
+      probation_salary: c.probation_salary || '',
+      regular_salary: c.regular_salary || '',
+      report_time: c.report_time || '',
     }
   },
 )
@@ -127,6 +162,13 @@ async function save(submitAfter) {
       report_date: form.value.report_date,
       probation_days: form.value.probation_days,
       note: form.value.note,
+      // 录用通知书字段（候选人确认页展示）
+      work_location: form.value.work_location || '',
+      contact_name: form.value.contact_name || '',
+      contact_phone: form.value.contact_phone || '',
+      probation_salary: form.value.probation_salary || '',
+      regular_salary: form.value.regular_salary || '',
+      report_time: form.value.report_time || '',
     }
     let offerId = props.context?.id
     if (isEdit.value) {

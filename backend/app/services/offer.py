@@ -281,6 +281,13 @@ def create_offer(
     job_title: str | None = None,
     probation_days: int = 30,
     note: str = "",
+    # ── 录用通知书字段（候选人确认页 /o/{token} 展示）──
+    work_location: str = "",
+    contact_name: str = "",
+    contact_phone: str = "",
+    probation_salary: str = "",
+    regular_salary: str = "",
+    report_time: str = "",
     settings: Settings | None = None,
 ) -> Offer:
     """从招聘汇总起草一条 Offer（draft）。
@@ -332,6 +339,13 @@ def create_offer(
         report_date=report_date,
         probation_days=int(probation_days or 30),
         note=note or "",
+        # 录用通知书字段
+        work_location=work_location or "",
+        contact_name=contact_name or "",
+        contact_phone=contact_phone or "",
+        probation_salary=probation_salary or "",
+        regular_salary=regular_salary or "",
+        report_time=report_time or "",
         status=STATUS_DRAFT,
     )
     db.add(row)
@@ -347,6 +361,13 @@ def update_offer(
     report_date: date | None = None,
     probation_days: int | None = None,
     note: str | None = None,
+    # ── 录用通知书字段 ──
+    work_location: str | None = None,
+    contact_name: str | None = None,
+    contact_phone: str | None = None,
+    probation_salary: str | None = None,
+    regular_salary: str | None = None,
+    report_time: str | None = None,
 ) -> Offer:
     """修改 Offer 内容（仅 draft / rejected 可改）。"""
     if offer.status not in (STATUS_DRAFT, STATUS_REJECTED):
@@ -365,6 +386,19 @@ def update_offer(
         offer.probation_days = int(probation_days)
     if note is not None:
         offer.note = note
+    # 录用通知书字段
+    if work_location is not None:
+        offer.work_location = work_location
+    if contact_name is not None:
+        offer.contact_name = contact_name
+    if contact_phone is not None:
+        offer.contact_phone = contact_phone
+    if probation_salary is not None:
+        offer.probation_salary = probation_salary
+    if regular_salary is not None:
+        offer.regular_salary = regular_salary
+    if report_time is not None:
+        offer.report_time = report_time
     return offer
 
 
@@ -619,6 +653,13 @@ def serialize_offer(
         "report_date": offer.report_date.isoformat() if offer.report_date else None,
         "probation_days": offer.probation_days,
         "note": offer.note,
+        # 录用通知书字段（HR 发起 Offer 时填写）
+        "work_location": offer.work_location,
+        "contact_name": offer.contact_name,
+        "contact_phone": offer.contact_phone,
+        "probation_salary": offer.probation_salary,
+        "regular_salary": offer.regular_salary,
+        "report_time": offer.report_time,
         "status": offer.status,
         "status_label": status_label(offer.status),
         "approver_open_id": offer.approver_open_id,

@@ -61,6 +61,16 @@ class Offer(TimestampMixin, Base):
     # 备注（薪资等敏感信息不入库，需要时自由填写）
     note: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
+    # ── 录用通知书字段（候选人确认页 /o/{token} 展示）──────────────
+    # 这几项由 HR 发起 Offer 时填写（每个候选人可能不同）；
+    # 公司名、报到携带资料、法律声明为**固定文案**，见 services/offer_letter.py
+    work_location: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    contact_name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    contact_phone: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    probation_salary: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    regular_salary: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    report_time: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+
     # ── 状态（10 态，见 services/offer.py）────────────────────
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)
 
