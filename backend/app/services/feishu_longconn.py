@@ -51,13 +51,43 @@ def _open_db():
     return factory()
 
 
-def _toast(kind: str, content: str) -> Any:
-    """构造回调响应里的 toast（kind: info / success / error / warning）。"""
+def _respond(*, toast: tuple[str, str] | None = None, card: dict | None = None) -> Any:
+    """构造卡片回调响应。
+
+    - ``toast``：（类型, 文案），飞书客户端弹一条小提示；
+    - ``card``：**就地替换**原卡片。
+
+    两者可同时使用。点击后必须替换卡片，否则审批人会以为操作没生效而重复点击。
+    """
     from lark_oapi.event.callback.model.p2_card_action_trigger import (
         P2CardActionTriggerResponse,
     )
 
-    return P2CardActionTriggerResponse({"toast": {"type": kind, "content": content}})
+    payload: dict = {}
+    if toast:
+        payload["toast"] = {"type": toast[0], "content": toast[1]}
+    if card is not None:
+        payload["card"] = {"type": "raw", "data": card}
+    return P2CardActionTriggerResponse(payload)
+
+
+def _toast(kind: str, content: str) -> Any:
+    """仅弹 toast 的回调响应（kind: info / success / error / warning）。"""
+    return _respond(toast=(kind, content))
+
+
+def _result_card(*, title: str, template: str, lines: list[str]) -> dict:
+    """操作成功后用于**替换**原审批卡片的结果卡片（不带按钮，避免重复点击）。"""
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": template,
+            "title": {"tag": "plain_text", "content": title},
+        },
+        "elements": [
+            {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(lines)}}
+        ],
+    }
 
 
 def _reject_form_card(offer_id: str) -> Any:
@@ -169,11 +199,38 @@ def _handle_card_action(data: Any) -> Any:
                     db.commit()
                     db.refresh(offer)
                     _notify_hr_after_approve(offer, operator_open_id)
-                    return _toast("success", "已通过，Offer 链接将推送给 HR")
+                    # 就地替换卡片为「已通过」，否则审批人会以为没生效而重复点击
+                    return _respond(
+                        toast=("success", "已通过，Offer 链接将推送给 HR"),
+                        card=_result_card(
+                            title="✅ Offer 已通过",
+                            template="green",
+                            lines=[
+                                f"**{offer.candidate_name}** · {offer.job_title}",
+                                "",
+                                "审批已通过，候选人确认链接已推送给 HR。",
+                                "候选人确认后会收到「已接受 / 已婉拒」卡片通知。",
+                            ],
+                        ),
+                    )
                 else:
                     offer_svc.reject_offer(db, offer, note=note)
                     db.commit()
-                    return _toast("success", "已驳回")
+                    # 就地替换卡片为「已驳回」
+                    return _respond(
+                        toast=("success", "已驳回"),
+                        card=_result_card(
+                            title="⛔ Offer 已驳回",
+                            template="red",
+                            lines=[
+                                f"**{offer.candidate_name}** · {offer.job_title}",
+                                "",
+                                f"**驳回意见**：{note}",
+                                "",
+                                "如需重新发起，请 HR 修改后再次提交审批。",
+                            ],
+                        ),
+                    )
             finally:
                 db.close()
 

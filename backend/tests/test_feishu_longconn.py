@@ -146,6 +146,11 @@ def test_approve_moves_offer_to_sent(wire):
     assert db.commits == 1
     assert db.closed is True
     assert "已通过" in resp["toast"]["content"]
+    # 卡片被就地替换为「已通过」且不再带按钮（避免审批人以为没生效而重复点击）
+    card = resp["card"]["data"]
+    assert card["header"]["title"]["content"] == "✅ Offer 已通过"
+    assert card["header"]["template"] == "green"
+    assert "button" not in json.dumps(card)
 
 
 # ── 回调：驳回（先弹输入框）────────────────────────────────────
@@ -203,6 +208,11 @@ def test_reject_submit_with_note_marks_rejected(wire):
     assert offer.approval_note == "岗位已招满"
     assert db.commits == 1
     assert "已驳回" in resp["toast"]["content"]
+    # 卡片被就地替换为「已驳回」，并回显驳回意见
+    card = resp["card"]["data"]
+    assert card["header"]["template"] == "red"
+    assert "岗位已招满" in json.dumps(card, ensure_ascii=False)
+    assert "button" not in json.dumps(card)
 
 
 # ── 回调：异常与越权 ─────────────────────────────────────────
