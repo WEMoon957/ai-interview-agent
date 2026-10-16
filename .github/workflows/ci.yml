@@ -10,6 +10,25 @@ jobs:
   backend:
     name: Backend tests (pytest)
     runs-on: ubuntu-latest
+
+    # 测试套件里有一部分用例**直接使用真实数据库**（如 test_auth_guard 要查会话表、
+    # offer/公司文化相关用例要查快照表），因此 CI 必须提供 Postgres 并跑完迁移，
+    # 否则这些用例会以 psycopg.OperationalError（connection refused）失败。
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: interview
+          POSTGRES_PASSWORD: interview
+          POSTGRES_DB: interview
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U interview"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,10 +45,15 @@ jobs:
           pip install -r requirements.txt
           pip install pytest httpx
 
+      - name: Prepare database schema
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://interview:interview@localhost:5432/interview
+        run: alembic upgrade head
+
       - name: Run tests
         working-directory: backend
         env:
-          # 当前测试套件全部用 monkeypatch 桩掉 LLM / DB，无需真实密钥或数据库
           LLM_API_KEY: dummy-ci-key
           DATABASE_URL: postgresql://interview:interview@localhost:5432/interview
         run: python -m pytest -q
