@@ -29,8 +29,9 @@
         </el-table-column>
         <el-table-column prop="max_follow_ups" label="追问上限" width="90" />
         <el-table-column prop="duration_limit" label="时长(分)" width="90" />
-        <el-table-column label="操作" width="100">
+        <el-table-column label="操作" width="150">
           <template #default="{ row }">
+            <el-button size="small" type="primary" text @click="openEdit(row)">编辑</el-button>
             <el-button size="small" type="danger" text @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -38,7 +39,11 @@
     </el-card>
 
     <!-- 新建模板弹窗 -->
-    <el-dialog v-model="dialogVisible" title="新建面试模板" width="760px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="editingId ? '编辑面试模板' : '新建面试模板'"
+      width="min(760px, 94vw)"
+    >
       <el-form label-width="100px">
         <el-form-item label="岗位" required>
           <el-select v-model="form.job_id" placeholder="选择岗位" style="width: 100%">
@@ -132,13 +137,15 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listJobs, listTemplates, createTemplate, deleteTemplate } from '../../api'
+import { listJobs, listTemplates, createTemplate, updateTemplate, deleteTemplate } from '../../api'
 
 const templates = ref([])
 const jobs = ref([])
 const loading = ref(false)
 const dialogVisible = ref(false)
 const saving = ref(false)
+// 正在编辑的模板 id；为空串表示「新建」
+const editingId = ref('')
 const form = ref({
   job_id: '',
   questions: [{ type: 'subjective', text: '', options: [], answer: '', dimension: '' }],
@@ -172,17 +179,35 @@ async function load() {
   }
 }
 
+function defaultRubric() {
+  // 餐饮门店通用维度（原默认值是「技术深度/项目经验」，面向研发岗，餐饮 HR 会一头雾水）
+  return [
+    { name: '服务意识', weight: 0.35, max_score: 10 },
+    { name: '稳定性', weight: 0.25, max_score: 10 },
+    { name: '沟通表达', weight: 0.2, max_score: 10 },
+    { name: '岗位匹配', weight: 0.2, max_score: 10 },
+  ]
+}
+
 function openCreate() {
+  editingId.value = ''
   form.value = {
     job_id: '',
     questions: [newQuestion()],
-    rubric: [
-      { name: '技术深度', weight: 0.4, max_score: 10 },
-      { name: '项目经验', weight: 0.3, max_score: 10 },
-      { name: '沟通表达', weight: 0.15, max_score: 10 },
-      { name: '岗位匹配', weight: 0.15, max_score: 10 },
-    ],
+    rubric: defaultRubric(),
     max_follow_ups: 2,
+  }
+  dialogVisible.value = true
+}
+
+function openEdit(row) {
+  editingId.value = row.id
+  form.value = {
+    job_id: row.job_id,
+    // 深拷贝：编辑过程中不应直接改动表格里的数据（取消编辑需保持原样）
+    questions: JSON.parse(JSON.stringify(row.questions || [newQuestion()])),
+    rubric: JSON.parse(JSON.stringify(row.rubric || defaultRubric())),
+    max_follow_ups: row.max_follow_ups ?? 2,
   }
   dialogVisible.value = true
 }
@@ -250,7 +275,7 @@ async function handleSave() {
   const questions = form.value.questions
     .filter((q) => q.text.trim())
     .map((q, i) => {
-      const item = { id: `q${i + 1}`, text: q.text.trim() }
+      const item = { id: q.id || `q${i + 1}`, text: q.text.trim() }
       if (q.type === 'choice') {
         const opts = (q.options || []).map((o) => (o || '').trim()).filter(Boolean)
         if (opts.length < 2) {
@@ -275,15 +300,21 @@ async function handleSave() {
   }
 
   saving.value = true
+  const payload = {
+    job_id: form.value.job_id,
+    questions,
+    rubric,
+    duration_limit: 30,
+    max_follow_ups: form.value.max_follow_ups,
+  }
   try {
-    await createTemplate({
-      job_id: form.value.job_id,
-      questions,
-      rubric,
-      duration_limit: 30,
-      max_follow_ups: form.value.max_follow_ups,
-    })
-    ElMessage.success('模板创建成功')
+    if (editingId.value) {
+      await updateTemplate(editingId.value, payload)
+      ElMessage.success('模板已更新（已发出的面试不受影响）')
+    } else {
+      await createTemplate(payload)
+      ElMessage.success('模板创建成功')
+    }
     dialogVisible.value = false
     load()
   } catch (e) {

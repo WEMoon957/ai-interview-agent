@@ -31,9 +31,10 @@ from app.api.schemas import (
     CreateAdminUserRequest,
     LoginRequest,
     ResetPasswordRequest,
+    UpdateAdminUserRequest,
 )
 from app.config import Settings, get_settings
-from app.db.models.admin_user import ADMIN_ROLE, AdminUser
+from app.db.models.admin_user import ADMIN_ROLE, VALID_ROLES, AdminUser
 from app.db.models.audit_log import ACTION_ADMIN_WRITE, ACTION_USER_DISABLED, ACTION_USER_CREATED
 from app.exceptions import BizError
 from app.services import audit
@@ -202,6 +203,68 @@ def _get_target_user(db: Session, user_id: uuid.UUID, actor: AdminUser) -> Admin
     if target.id == actor.id:
         raise BizError(422, "不能对当前登录账号执行该操作", http_status=422)
     return target
+
+
+@router.put("/users/{user_id}")
+def update_admin_user(
+    user_id: uuid.UUID,
+    payload: UpdateAdminUserRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: AdminUser = Depends(require_role(ADMIN_ROLE)),
+):
+    """编辑后台账号（显示名 / 角色 / 邮箱）。
+
+    **登录用户名不可修改** —— 它是登录凭据，改名会让使用者困惑；
+    如需换登录名，请新建账号并停用旧账号。
+    """
+    target = _get_target_user(db, user_id, actor)
+
+    changes: list[str] = []
+    if payload.display_name is not None:
+        target.display_name = (payload.display_name or "").strip()[:128]
+        changes.append(f"显示名→{target.display_name or '（空）'}")
+
+    if payload.role is not None:
+        if payload.role not in VALID_ROLES:
+            raise BizError(
+                422, f"角色非法（可选：{'、'.join(VALID_ROLES)}）", http_status=422
+            )
+        if payload.role != target.role:
+            changes.append(f"角色 {target.role}→{payload.role}")
+            target.role = payload.role
+
+    if payload.email is not None:
+        normalized = (payload.email or "").strip().lower() or None
+        if normalized and "@" not in normalized:
+            raise BizError(422, "邮箱格式不正确", http_status=422)
+        if normalized and normalized != (target.email or None):
+            occupied = (
+                db.query(AdminUser)
+                .filter(AdminUser.email == normalized, AdminUser.id != target.id)
+                .first()
+            )
+            if occupied is not None:
+                raise BizError(409, "该邮箱已被其他账号占用", http_status=409)
+        target.email = normalized
+        changes.append(f"邮箱→{normalized or '（空）'}")
+
+    if not changes:
+        # 没有任何变化时不写审计，直接返回现状
+        return ok(_user_out(target))
+
+    db.commit()
+    db.refresh(target)
+
+    audit.record(
+        db,
+        action=ACTION_ADMIN_WRITE,
+        request=request,
+        actor=actor,
+        target=f"admin_users/{target.username}",
+        detail="编辑账号：" + "；".join(changes),
+    )
+    return ok(_user_out(target))
 
 
 @router.post("/users/{user_id}/disable")

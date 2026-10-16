@@ -62,6 +62,7 @@
             <el-button v-if="isLocked(row)" size="small" type="warning" text @click="onUnlock(row)">
               解锁
             </el-button>
+            <el-button size="small" type="primary" text @click="openEdit(row)">编辑</el-button>
             <el-button v-if="row.is_active" size="small" type="primary" text @click="openReset(row)">
               重置密码
             </el-button>
@@ -80,7 +81,12 @@
     </el-card>
 
     <!-- 新建账号 -->
-    <el-dialog v-model="createVisible" title="新建账号" width="480px" @closed="resetCreateForm">
+    <el-dialog
+      v-model="createVisible"
+      :title="editingId ? '编辑账号' : '新建账号'"
+      width="min(480px, 94vw)"
+      @closed="resetCreateForm"
+    >
       <el-form
         ref="createFormRef"
         :model="createForm"
@@ -88,8 +94,15 @@
         label-position="top"
         @submit.prevent="submitCreate"
       >
-        <el-form-item label="用户名" prop="username">
-          <el-input v-model="createForm.username" placeholder="字母/数字/._-，至少 3 位" />
+        <el-form-item label="登录账号" prop="username">
+          <el-input
+            v-model="createForm.username"
+            :disabled="!!editingId"
+            placeholder="字母/数字/._-，至少 3 位"
+          />
+          <el-text v-if="editingId" size="small" type="info">
+            登录账号创建后不可修改；如需更换，请新建账号并停用旧账号
+          </el-text>
         </el-form-item>
         <el-form-item label="姓名（展示用）" prop="display_name">
           <el-input v-model="createForm.display_name" placeholder="如：张三" />
@@ -104,7 +117,7 @@
         <el-form-item label="邮箱（选填）" prop="email">
           <el-input v-model="createForm.email" placeholder="用于标识，暂不做验证" />
         </el-form-item>
-        <el-form-item label="初始密码" prop="password">
+        <el-form-item v-if="!editingId" label="初始密码" prop="password">
           <el-input
             v-model="createForm.password"
             type="password"
@@ -115,7 +128,9 @@
       </el-form>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitCreate">创建</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitCreate">
+          {{ editingId ? '保存' : '创建' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -175,6 +190,7 @@ import {
   listAdminUsers,
   resetAdminUserPassword,
   unlockAdminUser,
+  updateAdminUser,
 } from '../../api'
 
 const users = ref([])
@@ -211,6 +227,8 @@ async function load() {
 
 // ── 新建账号 ──────────────────────────────────────────────
 const createVisible = ref(false)
+// 正在编辑的账号 id；为空串表示「新建」
+const editingId = ref('')
 const createFormRef = ref(null)
 const createForm = reactive({
   username: '',
@@ -233,6 +251,7 @@ const createRules = {
 }
 
 function resetCreateForm() {
+  editingId.value = ''
   createForm.username = ''
   createForm.display_name = ''
   createForm.role = 'hr'
@@ -242,6 +261,17 @@ function resetCreateForm() {
 }
 
 function openCreate() {
+  editingId.value = ''
+  createVisible.value = true
+}
+
+function openEdit(row) {
+  editingId.value = row.id
+  createForm.username = row.username
+  createForm.display_name = row.display_name || ''
+  createForm.role = row.role
+  createForm.email = row.email || ''
+  createForm.password = ''
   createVisible.value = true
 }
 
@@ -251,15 +281,26 @@ async function submitCreate() {
 
   submitting.value = true
   try {
-    await createAdminUser({
-      username: createForm.username.trim(),
-      password: createForm.password,
-      role: createForm.role,
-      email: createForm.email.trim() || null,
-      display_name: createForm.display_name.trim(),
-    })
-    createVisible.value = false
-    ElMessage.success('账号已创建，请把初始密码单独发给本人')
+    if (editingId.value) {
+      // 编辑：仅提交显示名 / 角色 / 邮箱（登录账号与密码不在此处修改）
+      await updateAdminUser(editingId.value, {
+        role: createForm.role,
+        email: createForm.email.trim() || null,
+        display_name: createForm.display_name.trim(),
+      })
+      createVisible.value = false
+      ElMessage.success('账号已更新')
+    } else {
+      await createAdminUser({
+        username: createForm.username.trim(),
+        password: createForm.password,
+        role: createForm.role,
+        email: createForm.email.trim() || null,
+        display_name: createForm.display_name.trim(),
+      })
+      createVisible.value = false
+      ElMessage.success('账号已创建，请把初始密码单独发给本人')
+    }
     await load()
   } catch (err) {
     // 错误提示由请求拦截器统一弹出（重名 409 / 弱密码 422 等）

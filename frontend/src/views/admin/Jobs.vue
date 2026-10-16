@@ -52,8 +52,9 @@
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="100">
+        <el-table-column label="操作" width="150">
           <template #default="{ row }">
+            <el-button size="small" type="primary" text @click="openEdit(row)">编辑</el-button>
             <el-button size="small" type="danger" text @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -69,7 +70,11 @@
     </el-card>
 
     <!-- 新建岗位弹窗 -->
-    <el-dialog v-model="dialogVisible" title="新建岗位" width="600px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="editingId ? '编辑岗位' : '新建岗位'"
+      width="min(600px, 94vw)"
+    >
       <el-form :model="form" label-width="90px">
         <el-form-item label="岗位名称" required>
           <el-input v-model="form.title" placeholder="如：高级后端工程师" />
@@ -117,6 +122,8 @@ const jobs = ref([])
 const loading = ref(false)
 const dialogVisible = ref(false)
 const saving = ref(false)
+// 正在编辑的岗位 id；为空串表示「新建」
+const editingId = ref('')
 const form = ref({ title: '', jd_text: '', skills: [], skip_screening: false })
 
 async function load() {
@@ -129,7 +136,19 @@ async function load() {
 }
 
 function openCreate() {
+  editingId.value = ''
   form.value = { title: '', jd_text: '', skills: [], skip_screening: false }
+  dialogVisible.value = true
+}
+
+function openEdit(row) {
+  editingId.value = row.id
+  form.value = {
+    title: row.title || '',
+    jd_text: row.jd_text || '',
+    skills: [...(row.requirements?.skills || [])],
+    skip_screening: !!row.skip_screening,
+  }
   dialogVisible.value = true
 }
 
@@ -140,13 +159,19 @@ async function handleSave() {
   }
   saving.value = true
   try {
-    await createJob({
+    const payload = {
       title: form.value.title.trim(),
       jd_text: form.value.jd_text,
       requirements: { skills: form.value.skills },
       skip_screening: form.value.skip_screening,
-    })
-    ElMessage.success('岗位创建成功')
+    }
+    if (editingId.value) {
+      await updateJob(editingId.value, payload)
+      ElMessage.success('岗位已更新')
+    } else {
+      await createJob(payload)
+      ElMessage.success('岗位创建成功')
+    }
     dialogVisible.value = false
     load()
   } finally {

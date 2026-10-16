@@ -13,6 +13,9 @@ export const listTemplates = () => request.get('/admin/templates')
 
 export const createTemplate = (data) => request.post('/admin/templates', data)
 
+export const updateTemplate = (templateId, data) =>
+  request.put(`/admin/templates/${templateId}`, data)
+
 export const deleteTemplate = (templateId) => request.delete(`/admin/templates/${templateId}`)
 
 export const createSession = (formData) =>
@@ -165,6 +168,9 @@ export const authChangePassword = (data) => request.post('/auth/change-password'
 export const listAdminUsers = () => request.get('/auth/users')
 
 export const createAdminUser = (data) => request.post('/auth/users', data)
+
+// 编辑账号（显示名 / 角色 / 邮箱；登录用户名不可改）
+export const updateAdminUser = (userId, data) => request.put(`/auth/users/${userId}`, data)
 
 export const disableAdminUser = (userId) => request.post(`/auth/users/${userId}/disable`)
 

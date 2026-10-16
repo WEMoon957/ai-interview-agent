@@ -244,6 +244,48 @@ def create_template(payload: TemplateCreate, db: Session = Depends(get_db)):
     )
 
 
+@router.put("/templates/{template_id}")
+def update_template(
+    template_id: str, payload: TemplateCreate, db: Session = Depends(get_db)
+):
+    """更新面试模板（问题集 / 评分维度 / 追问上限 / 文化匹配配置）。
+
+    重要：模板内容在候选人**首次进入面试时**会被复制进面试状态（快照），
+    之后不再回读模板 —— 因此修改模板**不会影响已发出或进行中的面试**，
+    只对之后新发起的面试生效。
+    """
+    tid = _parse_uuid(template_id, "template_id")
+    template = db.get(InterviewTemplate, tid)
+    if template is None:
+        raise BizError(404, "模板不存在", http_status=404)
+
+    job = db.get(JobPosting, payload.job_id)
+    if job is None:
+        raise BizError(404, "岗位不存在", http_status=404)
+
+    template.job_id = payload.job_id
+    template.questions = [q.model_dump() for q in payload.questions]
+    template.rubric = [r.model_dump(mode="json") for r in payload.rubric]
+    template.duration_limit = payload.duration_limit
+    template.max_follow_ups = payload.max_follow_ups
+    template.culture_fit = payload.culture_fit or {}
+
+    db.commit()
+    db.refresh(template)
+
+    return ok(
+        {
+            "id": str(template.id),
+            "job_id": str(template.job_id),
+            "questions": template.questions,
+            "rubric": template.rubric,
+            "duration_limit": template.duration_limit,
+            "max_follow_ups": template.max_follow_ups,
+            "culture_fit": template.culture_fit or {},
+        }
+    )
+
+
 @router.post("/sessions")
 def create_session(
     template_id: str = Form(...),

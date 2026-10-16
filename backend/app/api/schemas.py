@@ -362,6 +362,14 @@ class CreateAdminUserRequest(BaseModel):
     display_name: str = Field(default="", max_length=128, description="展示名（选填）")
 
 
+class UpdateAdminUserRequest(BaseModel):
+    """编辑后台账号请求体（字段均可选，仅更新传入项；**登录用户名不可修改**）。"""
+
+    display_name: str | None = Field(default=None, max_length=128, description="显示名/姓名")
+    role: str | None = Field(default=None, description="角色：admin / hr / store_manager")
+    email: str | None = Field(default=None, description="邮箱（传空字符串表示清空）")
+
+
 class ResetPasswordRequest(BaseModel):
     """管理员重置他人密码请求体。"""
 
