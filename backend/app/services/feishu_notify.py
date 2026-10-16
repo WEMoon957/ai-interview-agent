@@ -218,6 +218,27 @@ def get_tenant_access_token(settings: Settings) -> str:
     return token
 
 
+# 飞书表示「access token 失效」的返回码：
+# 缓存里未过期的 token 仍可能被服务端提前作废（重启、多实例、凭据轮换等），
+# 此时必须清缓存换新 token 重试，否则会出现「有时成功、有时 99991663」的间歇失败。
+_TOKEN_INVALID_CODES = {99991663, 99991664, 99991668}
+
+
+def invalidate_token_cache() -> None:
+    """清空进程内 token 缓存，强制下次调用重新获取。"""
+    with _TOKEN_LOCK:
+        _TOKEN_CACHE["token"] = ""
+        _TOKEN_CACHE["expires_at"] = 0.0
+
+
+def is_token_invalid_code(code: Any) -> bool:
+    """飞书返回码是否表示 access token 失效（需刷新后重试）。"""
+    try:
+        return int(code) in _TOKEN_INVALID_CODES
+    except (TypeError, ValueError):
+        return False
+
+
 def _api_get(path: str, params: dict, settings: Settings) -> tuple[bool, Any]:
     """以 bot 身份直接调飞书 Open API（GET），返回 (是否成功, data 或错误说明)。"""
     if not (settings.feishu_app_id and settings.feishu_app_secret):
@@ -267,22 +288,35 @@ def send_via_api(open_id: str, text: str, settings: Settings) -> tuple[bool, str
         "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": text}}],
     }
 
+    body = {
+        "receive_id": open_id,
+        "msg_type": "interactive",
+        "content": json.dumps(card, ensure_ascii=False),
+    }
     try:
         resp = httpx.post(
             f"{_FEISHU_API_ROOT}/open-apis/im/v1/messages",
             params={"receive_id_type": "open_id"},
             headers={"Authorization": f"Bearer {token}"},
-            json={
-                "receive_id": open_id,
-                "msg_type": "interactive",
-                "content": json.dumps(card, ensure_ascii=False),
-            },
+            json=body,
             timeout=settings.feishu_notify_timeout,
         )
+        data = resp.json()
+        # 缓存的 token 可能被服务端提前作废（99991663）：清缓存换新 token 重试一次
+        if is_token_invalid_code(data.get("code")):
+            invalidate_token_cache()
+            token = get_tenant_access_token(settings)
+            resp = httpx.post(
+                f"{_FEISHU_API_ROOT}/open-apis/im/v1/messages",
+                params={"receive_id_type": "open_id"},
+                headers={"Authorization": f"Bearer {token}"},
+                json=body,
+                timeout=settings.feishu_notify_timeout,
+            )
+            data = resp.json()
     except httpx.HTTPError as exc:
         return False, f"发送请求失败：{exc}"
 
-    data = resp.json()
     if data.get("code") == 0:
         return True, ""
     return False, f"发送失败 code={data.get('code')} msg={data.get('msg')}"
@@ -845,22 +879,35 @@ def send_card_via_api(open_id: str, card: dict, settings: Settings) -> tuple[boo
     except Exception as exc:  # noqa: BLE001 - 统一降级为失败说明
         return False, str(exc)
 
+    body = {
+        "receive_id": open_id,
+        "msg_type": "interactive",
+        "content": json.dumps(card, ensure_ascii=False),
+    }
     try:
         resp = httpx.post(
             f"{_FEISHU_API_ROOT}/open-apis/im/v1/messages",
             params={"receive_id_type": "open_id"},
             headers={"Authorization": f"Bearer {token}"},
-            json={
-                "receive_id": open_id,
-                "msg_type": "interactive",
-                "content": json.dumps(card, ensure_ascii=False),
-            },
+            json=body,
             timeout=settings.feishu_notify_timeout,
         )
+        data = resp.json()
+        # 缓存的 token 可能被服务端提前作废（99991663）：清缓存换新 token 重试一次
+        if is_token_invalid_code(data.get("code")):
+            invalidate_token_cache()
+            token = get_tenant_access_token(settings)
+            resp = httpx.post(
+                f"{_FEISHU_API_ROOT}/open-apis/im/v1/messages",
+                params={"receive_id_type": "open_id"},
+                headers={"Authorization": f"Bearer {token}"},
+                json=body,
+                timeout=settings.feishu_notify_timeout,
+            )
+            data = resp.json()
     except httpx.HTTPError as exc:
         return False, f"发送请求失败：{exc}"
 
-    data = resp.json()
     if data.get("code") == 0:
         return True, ""
     return False, f"发送失败 code={data.get('code')} msg={data.get('msg')}"
@@ -1000,10 +1047,22 @@ def create_task_via_api(
             json=body,
             timeout=settings.feishu_notify_timeout,
         )
+        data = resp.json()
+        # 缓存的 token 可能被服务端提前作废：清缓存换新 token 重试一次
+        if is_token_invalid_code(data.get("code")):
+            invalidate_token_cache()
+            token = get_tenant_access_token(settings)
+            resp = httpx.post(
+                f"{_FEISHU_API_ROOT}/open-apis/task/v2/tasks",
+                params={"user_id_type": "open_id"},
+                headers={"Authorization": f"Bearer {token}"},
+                json=body,
+                timeout=settings.feishu_notify_timeout,
+            )
+            data = resp.json()
     except httpx.HTTPError as exc:
         return False, f"创建任务请求失败：{exc}"
 
-    data = resp.json()
     if data.get("code") == 0:
         return True, ""
     return False, f"创建任务失败 code={data.get('code')} msg={data.get('msg')}"
