@@ -372,6 +372,100 @@ def _send_card_to(
     return ok_any, "; ".join(errors)
 
 
+# ──────────────────── 候选人邮件（Offer 主动推送） ────────────────────
+# 说明：邮件是「主动推送」通道 —— 候选人不必自己保存页面。
+# 邮件发送失败只记日志，**绝不影响**审批通过与候选人接受的主流程。
+
+
+def mail_offer_invite(
+    offer: Offer,
+    *,
+    link: str,
+    deadline: str = "",
+    candidate_email: str = "",
+    settings: Settings | None = None,
+) -> dict:
+    """审批通过后给候选人发第一封邮件（含「查看并接受 Offer」按钮）。
+
+    Returns:
+        ``{"status": "sent" | "skipped" | "failed", "to": 邮箱, "reason": 原因}``
+    """
+    from app.services import mailer
+
+    s = settings or get_settings()
+    to = (candidate_email or "").strip()
+    if not mailer.is_mail_ready(s):
+        return {"status": "skipped", "to": to, "reason": "邮件通道未启用"}
+    if not to:
+        return {"status": "skipped", "to": "", "reason": "候选人未留邮箱"}
+
+    if not deadline and getattr(offer, "expires_at", None):
+        deadline = format_deadline(offer.expires_at, s)
+
+    subject, html = mailer.build_offer_invite_mail(
+        candidate_name=offer.candidate_name or "",
+        job_title=offer.job_title or "",
+        store_name=offer.store_name or "",
+        report_date=offer.report_date,
+        link=link,
+        deadline=deadline,
+        settings=s,
+    )
+    ok, err = mailer.send_mail(to, subject, html, settings=s)
+    if ok:
+        logger.info("候选人 Offer 邮件已发送 to=%s offer_id=%s", to, offer.id)
+        return {"status": "sent", "to": to, "reason": ""}
+    logger.warning("候选人 Offer 邮件发送失败 to=%s offer_id=%s: %s", to, offer.id, err)
+    return {"status": "failed", "to": to, "reason": err}
+
+
+def mail_offer_accepted(
+    offer: Offer,
+    *,
+    candidate_email: str = "",
+    settings: Settings | None = None,
+) -> dict:
+    """候选人接受后发第二封邮件（录用要点 + 报到指引）。"""
+    from app.services import mailer
+
+    s = settings or get_settings()
+    to = (candidate_email or "").strip()
+    if not mailer.is_mail_ready(s):
+        return {"status": "skipped", "to": to, "reason": "邮件通道未启用"}
+    if not to:
+        return {"status": "skipped", "to": "", "reason": "候选人未留邮箱"}
+
+    subject, html = mailer.build_offer_accepted_mail(
+        candidate_name=offer.candidate_name or "",
+        job_title=offer.job_title or "",
+        store_name=offer.store_name or "",
+        report_date=offer.report_date,
+        report_time=getattr(offer, "report_time", "") or "",
+        work_location=getattr(offer, "work_location", "") or "",
+        contact_name=getattr(offer, "contact_name", "") or "",
+        contact_phone=getattr(offer, "contact_phone", "") or "",
+        settings=s,
+    )
+    ok, err = mailer.send_mail(to, subject, html, settings=s)
+    if ok:
+        logger.info("候选人接受确认邮件已发送 to=%s offer_id=%s", to, offer.id)
+        return {"status": "sent", "to": to, "reason": ""}
+    logger.warning("候选人接受邮件发送失败 to=%s offer_id=%s: %s", to, offer.id, err)
+    return {"status": "failed", "to": to, "reason": err}
+
+
+def offer_candidate_email(db, offer: Offer) -> str:
+    """取该 Offer 对应候选人的邮箱（取不到返回空串）。"""
+    try:
+        from app.db.models import Candidate
+
+        cand = db.get(Candidate, offer.candidate_id) if offer.candidate_id else None
+        return (cand.email or "").strip() if cand else ""
+    except Exception as exc:  # noqa: BLE001 - 取邮箱失败不阻断主流程
+        logger.warning("读取候选人邮箱失败 offer_id=%s: %s", getattr(offer, "id", ""), exc)
+        return ""
+
+
 def notify_offer_event(
     event: str,
     offer: Offer,

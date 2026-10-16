@@ -60,6 +60,22 @@ class Settings(BaseSettings):
     # 部署到服务器或走内网穿透时，改成 HR/候选人实际能访问的地址。
     public_base_url: str = "http://localhost:3000"
 
+    # ── 候选人邮件（Offer 通知 / 接受确认） ──────────────────────
+    # 总开关：False（或未配 SMTP）时所有候选人邮件静默跳过，不影响主流程
+    candidate_mail_enabled: bool = False
+    # 发件 SMTP：腾讯企业邮箱为 smtp.exmail.qq.com:465（SSL）
+    smtp_host: str = "smtp.exmail.qq.com"
+    smtp_port: int = 465
+    smtp_use_ssl: bool = True
+    # 发件邮箱（如 hr@your-domain.com）
+    smtp_username: str = ""
+    # 客户端专用密码（腾讯企业邮后台「设置→安全→客户端专用密码」生成；勿填登录密码）
+    smtp_password: str = ""
+    # 发件人显示名（候选人邮件列表里看到的名字）
+    mail_from_name: str = "昆明笨二娘餐饮管理有限公司 · 招聘组"
+    # 单封邮件发送超时（秒）
+    smtp_timeout: int = 15
+
     # ── 飞书 HR 通知（面试达标自动推送） ─────────────────────────
     # 总开关：False 时 final_report 不触发任何外部推送
     feishu_notify_enabled: bool = False

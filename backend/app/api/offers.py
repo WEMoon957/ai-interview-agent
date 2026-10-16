@@ -30,7 +30,12 @@ from app.db.models.summary import RecruitmentSummary
 from app.exceptions import BizError
 from app.services import offer as svc
 from app.services.offer_letter import build_letter
-from app.services.offer_notify import notify_offer_event
+from app.services.offer_notify import (
+    mail_offer_accepted,
+    mail_offer_invite,
+    notify_offer_event,
+    offer_candidate_email,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -252,12 +257,18 @@ def approve_offer(
     copy_text = svc.build_copy_text(row, link)
     notify = notify_offer_event("sent", row, link=link, copy_text=copy_text)
     logger.info("Offer 审批通过通知结果 offer_id=%s: %s", row.id, notify)
+
+    # 主动推送：给候选人发邮件（未配置邮件通道时静默跳过，不影响审批结果）
+    mail = mail_offer_invite(row, link=link, candidate_email=offer_candidate_email(db, row))
+    logger.info("Offer 审批通过候选人邮件结果 offer_id=%s: %s", row.id, mail)
+
     return ok(
         {
             "offer": svc.serialize_offer(row, with_link=True),
             "link": link,
             "copy_text": copy_text,
             "notify": notify,
+            "mail": mail,
         }
     )
 
@@ -339,6 +350,11 @@ def accept_offer(token: str, db: Session = Depends(get_db)):
 
     notify = notify_offer_event("accepted", row)
     logger.info("候选人接受 Offer 通知结果 offer_id=%s: %s", row.id, notify)
+
+    # 第二封邮件：录用要点 + 报到指引（幂等：非 sent 状态在服务层已被拒）
+    mail = mail_offer_accepted(row, candidate_email=offer_candidate_email(db, row))
+    logger.info("候选人接受确认邮件结果 offer_id=%s: %s", row.id, mail)
+
     return ok(
         {
             "status": row.status,
@@ -347,6 +363,7 @@ def accept_offer(token: str, db: Session = Depends(get_db)):
             "job_title": row.job_title,
             "store_name": row.store_name,
             "report_date": row.report_date.isoformat() if row.report_date else None,
+            "mail": mail,
         }
     )
 

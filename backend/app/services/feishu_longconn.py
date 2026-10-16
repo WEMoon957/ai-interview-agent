@@ -198,7 +198,7 @@ def _handle_card_action(data: Any) -> Any:
                     offer_svc.approve_offer(db, offer, note=note, settings=get_settings())
                     db.commit()
                     db.refresh(offer)
-                    _notify_hr_after_approve(offer, operator_open_id)
+                    _notify_hr_after_approve(offer, operator_open_id, db)
                     # 就地替换卡片为「已通过」，否则审批人会以为没生效而重复点击
                     return _respond(
                         toast=("success", "已通过，Offer 链接将推送给 HR"),
@@ -249,10 +249,14 @@ def _candidate_link(offer) -> str:
     return f"{base}/o/{offer.token}"
 
 
-def _notify_hr_after_approve(offer, operator_open_id: str) -> None:
-    """审批通过后把 Offer 链接推给 HR（best-effort，失败只记日志）。"""
+def _notify_hr_after_approve(offer, operator_open_id: str, db=None) -> None:
+    """审批通过后把 Offer 链接推给 HR，并给候选人发第一封邮件（best-effort，失败只记日志）。"""
     try:
-        from app.services.offer_notify import notify_offer_event
+        from app.services.offer_notify import (
+            mail_offer_invite,
+            notify_offer_event,
+            offer_candidate_email,
+        )
 
         notify_offer_event(
             "sent",
@@ -261,6 +265,14 @@ def _notify_hr_after_approve(offer, operator_open_id: str) -> None:
             copy_text="",
             actor=operator_open_id,
         )
+
+        # 主动推送：给候选人发邮件（与后台审批入口保持一致）
+        if db is not None:
+            mail_offer_invite(
+                offer,
+                link=_candidate_link(offer),
+                candidate_email=offer_candidate_email(db, offer),
+            )
     except Exception:  # noqa: BLE001 - 通知失败不影响审批结果
         logger.exception("审批通过后推送 HR 通知失败 offer_id=%s", getattr(offer, "id", ""))
 
