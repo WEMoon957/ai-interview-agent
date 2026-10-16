@@ -229,34 +229,44 @@ def start_long_connection(settings: Settings | None = None) -> bool:
             logger.info("飞书长连接已在运行，跳过重复启动")
             return True
 
-        try:
-            import lark_oapi as lark
-            from lark_oapi.event.callback.model.p2_card_action_trigger import (
-                P2CardActionTrigger,
-            )
-        except ImportError:
+        # 依赖存在性检查放在主线程（缺失要能立刻反馈）；真正的导入在子线程内完成
+        import importlib.util
+
+        if importlib.util.find_spec("lark_oapi") is None:
             logger.warning(
                 "飞书长连接已启用但未安装 lark-oapi，请执行 "
                 "`pip install lark-oapi`（requirements.txt 已包含）"
             )
             return False
 
-        event_handler = (
-            lark.EventDispatcherHandler.builder("", "")
-            .register_p2_card_action_trigger(_handle_card_action)
-            .build()
-        )
-        _client = lark.ws.Client(
-            s.feishu_app_id,
-            s.feishu_app_secret,
-            event_handler=event_handler,
-            log_level=lark.LogLevel.INFO,
-        )
+        app_id = s.feishu_app_id
+        app_secret = s.feishu_app_secret
 
         def _run() -> None:
+            # ⚠️ lark_oapi 必须在本**子线程内**导入：
+            #   ``lark_oapi/ws/client.py`` 在**模块级**执行 ``asyncio.get_event_loop()``，
+            #   若在 uvicorn 主线程（事件循环已运行）里导入，就会绑到那个正在运行的 loop，
+            #   随后 ``client.start()`` 抛 "this event loop is already running"。
+            import asyncio
+
+            import lark_oapi as lark
+
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
             try:
+                event_handler = (
+                    lark.EventDispatcherHandler.builder("", "")
+                    .register_p2_card_action_trigger(_handle_card_action)
+                    .build()
+                )
+                client = lark.ws.Client(
+                    app_id,
+                    app_secret,
+                    event_handler=event_handler,
+                    log_level=lark.LogLevel.INFO,
+                )
                 logger.info("飞书长连接启动中…")
-                _client.start()  # 阻塞直到连接结束
+                client.start()  # 阻塞直到连接结束
             except Exception:  # noqa: BLE001
                 logger.exception("飞书长连接异常退出")
 
