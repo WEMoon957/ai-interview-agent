@@ -19,10 +19,14 @@ services:
       retries: 10
 
   api:
-    image: python:3.11-slim
+    # 依赖在镜像构建阶段安装（见 backend/Dockerfile）；启动只做迁移 + 起服务，
+    # 不再每次重装依赖 → 部署/重启从 3 分钟降到数秒
+    build:
+      context: ./backend
     container_name: interview-agent-api
     working_dir: /app
     volumes:
+      # 代码仍用 bind mount（本地改代码即时生效）；挂载的是 /app，不影响镜像里已装的依赖
       - ./backend:/app
     env_file:
       # .env：项目通用配置；.env.local：仅存于服务器的敏感凭据（飞书 App Secret 等），已被 .gitignore 忽略
@@ -32,7 +36,7 @@ services:
     environment:
       # 容器内通过服务名访问 postgres，覆盖 .env 中的 localhost
       DATABASE_URL: postgresql://interview:interview@postgres:5432/interview
-      # 国内 pip 镜像加速（腾讯云镜像），避免容器启动时装依赖超时导致 502
+      # 国内 pip 镜像加速（构建期已由 Dockerfile 设置，此处保留兜底）
       PIP_INDEX_URL: "https://mirrors.cloud.tencent.com/pypi/simple/"
       PIP_TRUSTED_HOST: "mirrors.cloud.tencent.com"
     ports:
@@ -41,8 +45,7 @@ services:
       postgres:
         condition: service_healthy
     command: >
-      sh -c "pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple &&
-             alembic upgrade head &&
+      sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   web:

@@ -1,0 +1,25 @@
+# 构建镜像时排除的内容（.venv 有几百 MB，务必排除）
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 运行时产物（容器内由 bind mount / 卷提供）
+uploads/
+*.log
+
+# 本地/测试数据
+.env
+.env.*
+!.env.example
+tests/
+scripts/__pycache__/
+
+# 编辑器与系统垃圾
+.DS_Store
+.idea/
+.vscode/
