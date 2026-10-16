@@ -334,7 +334,7 @@ async function handleSave() {
 async function handleDelete(row) {
   try {
     await ElMessageBox.confirm(
-      `删除该模板将同时删除其下的所有会话和评分数据，确定要删除吗？`,
+      `删除「${jobTitle(row.job_id)}」的面试模板？该模板下的面试与评分数据也会一并删除，且不可恢复。`,
       '删除确认',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )

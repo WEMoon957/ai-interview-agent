@@ -225,8 +225,19 @@ function copyLink(row) {
   })
 }
 
-function openInterview(row) {
-  router.push(`/i/${row.token}`)
+async function openInterview(row) {
+  // 这是候选人的「正式答题页」，HR 一般不需要进入；误入可能占用一次作答，故先确认
+  try {
+    await ElMessageBox.confirm(
+      '即将打开的是候选人的正式答题页（HR 通常无需进入）。若只是检查页面效果，可放心预览；确定继续吗？',
+      '预览答题页',
+      { confirmButtonText: '继续预览', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  // 用新标签打开，避免 HR 在后台与答题页之间来回切换时误操作
+  window.open(`/i/${row.token}`, '_blank')
 }
 
 function copyResultLink() {

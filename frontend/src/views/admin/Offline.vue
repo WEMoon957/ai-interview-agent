@@ -279,7 +279,7 @@
         <el-form-item label="面试评语">
           <el-input v-model="scoreForm.comment" type="textarea" :rows="3" placeholder="填写线下复试评价" />
         </el-form-item>
-        <el-form-item label="录用结论">
+        <el-form-item label="录用结论" required>
           <el-radio-group v-model="scoreForm.decision">
             <el-radio label="pass">通过</el-radio>
             <el-radio label="hold">待定</el-radio>
@@ -817,11 +817,15 @@ function fillAiScore() {
 
 async function handleDelete(row) {
   try {
-    await ElMessageBox.confirm(`删除「${row.candidate_name}」的线下复试记录？`, '删除确认', {
-      type: 'warning',
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-    })
+    await ElMessageBox.confirm(
+      `删除「${row.candidate_name}」的线下复试记录？删除后该记录会从招聘汇总中移除，且不可恢复。`,
+      '删除确认',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+      }
+    )
   } catch {
     return
   }

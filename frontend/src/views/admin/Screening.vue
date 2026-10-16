@@ -122,6 +122,7 @@
           v-if="!isDirect"
           type="primary"
           :disabled="!selected.length"
+          :loading="inviting"
           @click="inviteSelected"
         >
           批量发起 AI 面试
@@ -463,14 +464,25 @@ function copyLink(row) {
   copyText(linkOf(row))
 }
 
+// 批量发起面试的处理中状态（避免 HR 重复点击）
+const inviting = ref(false)
+
 async function inviteSelected() {
   const ids = selected.value.map((r) => r.id)
   if (!ids.length) return
-  const res = await inviteScreenings({ screening_ids: ids })
-  invitedItems.value = res.items
-  linkVisible.value = true
-  tableRef.value?.clearSelection()
-  await loadScreenings()
+  inviting.value = true
+  try {
+    const res = await inviteScreenings({ screening_ids: ids })
+    invitedItems.value = res.items
+    linkVisible.value = true
+    ElMessage.success(`已为 ${ids.length} 位候选人发起面试`)
+    tableRef.value?.clearSelection()
+    await loadScreenings()
+  } catch (e) {
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    inviting.value = false
+  }
 }
 
 async function handleDelete(row) {

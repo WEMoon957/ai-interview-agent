@@ -4,6 +4,16 @@
       <div class="brand">笨二娘隆江猪脚饭</div>
       <div class="subtitle">招聘管理系统 · 后台登录</div>
 
+      <!-- 登录失败常驻提示：原来只有一闪而过的提示，HR 容易以为是自己点歪了 -->
+      <el-alert
+        v-if="loginError"
+        type="error"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 16px"
+        :title="loginError"
+      />
+
       <el-form
         ref="formRef"
         :model="form"
@@ -15,7 +25,7 @@
           <el-input
             v-model="form.username"
             size="large"
-            placeholder="用户名"
+            placeholder="请输入管理员发给你的账号"
             autocomplete="username"
             :prefix-icon="User"
             @keyup.enter="onSubmit"
@@ -83,16 +93,21 @@ function resolveRedirect(value) {
   return value
 }
 
+// 登录失败原因（常驻展示，避免一闪而过）
+const loginError = ref('')
+
 async function onSubmit() {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
 
+  loginError.value = ''
   try {
     await auth.login(form.username, form.password)
     ElMessage.success('登录成功')
     router.replace(resolveRedirect(route.query.redirect))
   } catch (err) {
-    // 错误提示已由请求拦截器统一弹出（后端不会区分"账号不存在"与"密码错误"）
+    // 后端不区分"账号不存在"与"密码错误"，这里统一提示
+    loginError.value = err?.message || '登录失败，请检查账号密码后重试'
     form.password = ''
   }
 }
