@@ -14,6 +14,7 @@
 默认把飞书推送与审批人配置改为自检专用值（不触碰 .env），结束后清理自建数据。
 """
 import argparse
+import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -304,6 +305,96 @@ def main() -> int:
         smoke.check("funnel" in stats and "accept_rate" in stats, "返回统计与漏斗字段")
         smoke.check(isinstance(stats["funnel"]["summaries_complete"], int), "漏斗可用")
 
+        # ── 13. 录用通知书 ────────────────────────────────────
+        print("\n[13] 录用通知书：字段回读与完整渲染")
+        offer4 = _new_offer(client, summary.id, "通知书测试门店", smoke)
+        if offer4:
+            smoke.check(
+                offer4.get("work_location") == "昆明市西山区万达北塔2507"
+                and offer4.get("contact_name") == "方玺"
+                and offer4.get("contact_phone") == "17702348593"
+                and offer4.get("probation_salary") == "固定8500元"
+                and offer4.get("regular_salary") == "10000元/月"
+                and offer4.get("report_time") == "上午9:00",
+                "HR 填写的 6 个通知书字段可保存并回读",
+            )
+            token4 = _to_sent(client, offer4["id"])
+            r = client.get(f"/offer/{token4}")
+            letter = (r.json().get("data") or {}).get("letter") or {}
+            smoke.check(
+                letter.get("company_name") == "昆明笨二娘餐饮管理有限公司",
+                "通知书含固定公司名",
+            )
+            smoke.check(len(letter.get("materials") or []) == 5, "通知书含 5 项携带材料")
+            smoke.check("劳动合同" in (letter.get("legal_note") or ""), "通知书含法律声明")
+            smoke.check(
+                letter.get("probation_phrase") == "试用期为一个月", "试用期按天数正确中文化"
+            )
+            smoke.check(
+                letter.get("work_location") == "昆明市西山区万达北塔2507"
+                and letter.get("contact_name") == "方玺",
+                "HR 填写内容出现在候选人页",
+            )
+            smoke.check(bool(letter.get("deadline")), "通知书含确认截止时间")
+            smoke.check("年" in (letter.get("letter_date") or ""), "通知书含落款日期")
+
+        # ── 14. 卡片按钮回调（直接驱动长连接处理函数，绕开飞书）──
+        print("\n[14] 卡片按钮回调：越权 / 驳回 / 同意")
+        # 同一汇总只允许一条"进行中"的 Offer，先释放上一步占用的那条
+        if offer4:
+            _force_delete_offer(offer4["id"], smoke)
+        offer5 = _new_offer(client, summary.id, "回调测试门店", smoke)
+        if offer5:
+            from app.services import feishu_longconn as lc
+
+            # 本步静默通知，避免自检真的给 HR 发消息
+            lc._notify_hr_after_approve = lambda *a, **k: None  # noqa: E731
+            oid5 = _uuid(offer5["id"])
+            client.post(f"/admin/offers/{offer5['id']}/submit-approval")
+
+            # 14.1 非审批人操作 → 拒绝
+            resp = _card_resp(
+                lc._handle_card_action(
+                    _card_event(offer5["id"], "approve", open_id="ou_stranger")
+                )
+            )
+            smoke.check("指定审批人" in _toast_content(resp), "非审批人点同意被拒绝")
+
+            # 14.2 点「驳回」→ 返回填写意见的卡片（状态不变）
+            resp = _card_resp(lc._handle_card_action(_card_event(offer5["id"], "reject")))
+            smoke.check(
+                "驳回意见" in json.dumps(resp, ensure_ascii=False), "点驳回返回填意见卡片"
+            )
+
+            # 14.3 提交空意见 → 拦截，状态不变
+            lc._handle_card_action(
+                _card_event(offer5["id"], lc.ACTION_REJECT_SUBMIT, form_value={})
+            )
+            row = db.get(Offer, oid5)
+            db.refresh(row)
+            smoke.check(row.status == "pending_approval", "驳回意见为空时不改状态")
+
+            # 14.4 提交有效意见 → 驳回成功（用真实审批人身份）
+            approver = (row.approver_open_id or "").split(",")[0]
+            lc._handle_card_action(
+                _card_event(
+                    offer5["id"],
+                    lc.ACTION_REJECT_SUBMIT,
+                    form_value={"reason": "岗位已招满"},
+                    open_id=approver,
+                )
+            )
+            db.refresh(row)
+            smoke.check(row.status == "rejected", "卡片驳回后状态为 rejected")
+            smoke.check(row.approval_note == "岗位已招满", "驳回意见已落库")
+
+            # 14.5 重新提交后用卡片「同意」→ sent + 生成 token
+            client.post(f"/admin/offers/{offer5['id']}/submit-approval")
+            lc._handle_card_action(_card_event(offer5["id"], "approve", open_id=approver))
+            db.refresh(row)
+            smoke.check(row.status == "sent", "卡片同意后状态为 sent")
+            smoke.check(bool(row.token), "卡片同意后生成候选人链接 token")
+
     finally:
         db.close()
 
@@ -342,6 +433,55 @@ def _future_date(days: int) -> str:
     return (datetime.now(timezone.utc).date() + timedelta(days=days)).isoformat()
 
 
+def _card_event(offer_id, action, *, form_value=None, open_id="ou_smoke_approver"):
+    """构造与飞书回传结构一致的假事件，用于驱动长连接卡片回调处理函数。"""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        event=SimpleNamespace(
+            action=SimpleNamespace(
+                value={"offer_id": str(offer_id), "action": action},
+                form_value=form_value or {},
+            ),
+            operator=SimpleNamespace(open_id=open_id),
+        )
+    )
+
+
+def _card_resp(resp) -> dict:
+    """把飞书 SDK 的回调响应对象转成可断言的 dict。"""
+    import json as _json
+
+    import lark_oapi as lark
+
+    return _json.loads(lark.JSON.marshal(resp))
+
+
+def _toast_content(resp: dict) -> str:
+    return ((resp or {}).get("toast") or {}).get("content") or ""
+
+
+def _force_delete_offer(offer_id: str, smoke) -> None:
+    """删除一条自检 Offer 并移出清理列表（用于释放「进行中」占位）。
+
+    同一汇总只允许一条进行中的 Offer（唯一索引 uq_offers_summary_active），
+    因此下一步要新建 Offer 时，必须先终结/删除上一步留下的那条。
+    """
+    from app.db.models import Offer
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        row = db.get(Offer, _uuid(offer_id))
+        if row is not None:
+            db.delete(row)
+            db.commit()
+    finally:
+        db.close()
+    if offer_id in smoke.created_offer_ids:
+        smoke.created_offer_ids.remove(offer_id)
+
+
 def _new_offer(client, summary_id, store_name, smoke):
     """起草一条新 Offer（用于分支验证）。"""
     r = client.post("/admin/offers", json={
@@ -349,6 +489,13 @@ def _new_offer(client, summary_id, store_name, smoke):
         "store_name": store_name,
         "report_date": _future_date(5),
         "note": "自检数据",
+        # 录用通知书字段（候选人确认页展示）
+        "work_location": "昆明市西山区万达北塔2507",
+        "contact_name": "方玺",
+        "contact_phone": "17702348593",
+        "probation_salary": "固定8500元",
+        "regular_salary": "10000元/月",
+        "report_time": "上午9:00",
     })
     if r.status_code != 200:
         smoke.check(False, f"起草分支 Offer 失败：{r.status_code} {r.text[:120]}")

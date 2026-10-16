@@ -17,8 +17,12 @@ import os
 import sys
 import tempfile
 import time
+from pathlib import Path
 
 import requests
+
+# 允许 `python scripts/smoke_recruitment_e2e.py` 直接运行：把 backend/ 加入模块搜索路径
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 DEFAULT_TIMEOUT = 180
 
@@ -32,11 +36,55 @@ def _check(cond, msg: str) -> None:
         raise SmokeError(msg)
 
 
+SESSION = requests.Session()
+
+
+def _ensure_login() -> None:
+    """为联调建立管理员会话。
+
+    管理端已启用「账号密码登录 + 会话 Cookie + CSRF」鉴权（迁移 0011_admin_auth），
+    因此联调脚本必须先用固定账号登录，否则 /admin/* 一律返回 401。
+
+    这里直接用服务层建会话（不经过明文密码），再把 Cookie 写入 SESSION：
+    - ia_session：会话票据（HttpOnly）
+    - ia_csrf：CSRF 令牌，还需以请求头回传（double-submit 校验）
+    """
+    from app.db.models.admin_user import ADMIN_ROLE, AdminUser
+    from app.db.session import SessionLocal
+    from app.services.auth import (
+        CSRF_COOKIE_NAME,
+        CSRF_HEADER_NAME,
+        SESSION_COOKIE_NAME,
+        create_session,
+        create_user,
+    )
+
+    db = SessionLocal()
+    try:
+        user = db.query(AdminUser).filter(AdminUser.username == "admin001").first()
+        if user is None:
+            user = create_user(
+                db,
+                username="admin001",
+                password="AdminLJY@2026",
+                role=ADMIN_ROLE,
+                display_name="招聘联调账号",
+                created_by="smoke",
+            )
+        token, csrf, _ = create_session(db, user)
+    finally:
+        db.close()
+
+    SESSION.cookies.set(SESSION_COOKIE_NAME, token)
+    SESSION.cookies.set(CSRF_COOKIE_NAME, csrf)
+    SESSION.headers[CSRF_HEADER_NAME] = csrf
+
+
 def _api(method: str, path: str, **kwargs):
     """调用后端接口并解包统一响应结构 {code,message,data}。"""
     url = f"{args.base_url}{path}"
     kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
-    resp = requests.request(method, url, **kwargs)
+    resp = SESSION.request(method, url, **kwargs)
     try:
         body = resp.json()
     except Exception:
@@ -213,6 +261,10 @@ def run_direct_invite_phase(ts: str) -> None:
 
 def main() -> int:
     ts = time.strftime("%m%d-%H%M%S")
+
+    step("0) 建立管理员会话（鉴权改造后管理端接口需登录）")
+    _ensure_login()
+    print("   已登录")
 
     step("1) 健康检查")
     health = _api("GET", "/health")
