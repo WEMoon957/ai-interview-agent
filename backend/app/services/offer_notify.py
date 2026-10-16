@@ -44,6 +44,16 @@ _TEMPLATES = {
 }
 
 
+def _fmt_score(value) -> str:
+    """评分格式化：None → 「—」，数字保留一位小数（供审批卡片展示）。"""
+    if value is None:
+        return "—"
+    try:
+        return f"{float(value):.1f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def _offer_lines(offer: Offer) -> list[str]:
     """卡片通用的 Offer 基本信息行。"""
     report_date = offer.report_date.isoformat() if offer.report_date else "待定"
@@ -56,18 +66,56 @@ def _offer_lines(offer: Offer) -> list[str]:
     ]
 
 
-def build_approval_card(offer: Offer, settings: Settings | None = None) -> dict:
-    """待审批卡片（带「同意 / 驳回」按钮）。"""
+def build_approval_card(
+    offer: Offer,
+    *,
+    scores: dict | None = None,
+    candidate: dict | None = None,
+    settings: Settings | None = None,
+) -> dict:
+    """待审批卡片（带「同意 / 驳回」按钮）。
+
+    审批人需要先核对候选人信息与评分，因此卡片额外带上：
+    ``scores``（初筛 / AI 面试 / 线下复试 / 最终加权分）与
+    ``candidate``（电话、邮箱、投递渠道）。缺数据时对应行自动省略。
+    """
     s = settings or get_settings()
     lines = [
-        "**有新的 Offer 待审批，请点击下方按钮处理。**",
+        "**有新的 Offer 待审批，请核对候选人信息与评分后处理。**",
         "",
         *_offer_lines(offer),
+        f"**应聘来源**：{'到店直招' if offer.source == 'walk_in' else '线上投递'}",
     ]
+
+    # 候选人联系信息（便于审批人核对身份 / 后续联系）
+    if candidate:
+        contacts = []
+        if candidate.get("phone"):
+            contacts.append(f"电话 {candidate['phone']}")
+        if candidate.get("email"):
+            contacts.append(f"邮箱 {candidate['email']}")
+        if contacts:
+            lines.append("**候选人联系方式**：" + " ｜ ".join(contacts))
+        if candidate.get("source_channel"):
+            lines.append(f"**投递渠道**：{candidate['source_channel']}")
+
+    # 各环节评分（用户诉求：审批时要能看到 AI 分与面试官分）
+    if scores:
+        lines += [
+            "",
+            "**各环节评分**",
+            f"· 简历初筛：{_fmt_score(scores.get('screening_score'))}",
+            f"· AI 面试：{_fmt_score(scores.get('ai_interview_score'))}",
+            f"· 线下复试（面试官）：{_fmt_score(scores.get('offline_score'))}",
+        ]
+        verdict = scores.get("final_verdict") or ""
+        final_line = f"· **最终加权分：{_fmt_score(scores.get('final_score'))}**"
+        if verdict:
+            final_line += f"（{verdict}）"
+        lines.append(final_line)
+
     if offer.note:
         lines.append(f"**备注**：{offer.note}")
-    if offer.source == "walk_in":
-        lines.append("**来源**：到店直招")
 
     return build_card(
         "🔔 Offer 待审批",
@@ -96,6 +144,8 @@ def build_offer_card(
     copy_text: str = "",
     settings: Settings | None = None,
     actor: str = "",
+    scores: dict | None = None,
+    candidate: dict | None = None,
 ) -> dict | None:
     """按事件构造卡片；未知事件返回 None（调用方跳过推送）。
 
@@ -173,7 +223,9 @@ def build_offer_card(
         return build_card("⚠️ 候选人未报到", _TEMPLATES[event], ["\n".join(lines)])
 
     if event == EVENT_PENDING_APPROVAL:
-        return build_approval_card(offer, s)
+        return build_approval_card(
+            offer, scores=scores, candidate=candidate, settings=s
+        )
 
     logger.warning("未知的 Offer 事件，跳过推送：%s", event)
     return None
@@ -331,6 +383,8 @@ def notify_offer_event(
     actor: str = "",
     dry_run: bool = False,
     task_creator=None,
+    scores: dict | None = None,
+    candidate: dict | None = None,
 ) -> dict:
     """推送 Offer 事件卡片（尽力而为，返回结果摘要）。
 
@@ -342,7 +396,14 @@ def notify_offer_event(
         return {"status": "skipped", "event": event, "recipients": [], "reason": "推送总开关关闭"}
 
     card = build_offer_card(
-        event, offer, link=link, copy_text=copy_text, settings=s, actor=actor
+        event,
+        offer,
+        link=link,
+        copy_text=copy_text,
+        settings=s,
+        actor=actor,
+        scores=scores,
+        candidate=candidate,
     )
     if card is None:
         return {"status": "skipped", "event": event, "recipients": [], "reason": "未知事件"}

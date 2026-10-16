@@ -24,7 +24,9 @@ from app.api.schemas import (
     OfferWithdraw,
 )
 from app.config import get_settings
+from app.db.models.candidate import Candidate
 from app.db.models.offer import Offer
+from app.db.models.summary import RecruitmentSummary
 from app.exceptions import BizError
 from app.services import offer as svc
 from app.services.offer_notify import notify_offer_event
@@ -169,6 +171,36 @@ def update_offer(offer_id: str, payload: OfferUpdate, db: Session = Depends(get_
     return ok(svc.serialize_offer(row))
 
 
+def _approval_context(db: Session, offer: Offer) -> tuple[dict, dict]:
+    """取出审批卡片要展示的「各环节评分」与「候选人联系信息」。
+
+    审批人需要据此核对身份与评分。缺数据时返回空字典，卡片会自动省略对应行。
+    """
+    scores: dict = {}
+    if offer.summary_id:
+        summary = db.get(RecruitmentSummary, offer.summary_id)
+        if summary is not None:
+            scores = {
+                "screening_score": summary.screening_score,
+                "ai_interview_score": summary.ai_interview_score,
+                "offline_score": summary.offline_score,
+                "final_score": summary.final_score,
+                "final_verdict": summary.final_verdict,
+            }
+
+    candidate: dict = {}
+    if offer.candidate_id:
+        cand = db.get(Candidate, offer.candidate_id)
+        if cand is not None:
+            candidate = {
+                "name": cand.name,
+                "phone": cand.phone,
+                "email": cand.email,
+                "source_channel": cand.source_channel,
+            }
+    return scores, candidate
+
+
 @router.post("/offers/{offer_id}/submit-approval")
 def submit_approval(offer_id: str, db: Session = Depends(get_db)):
     """提交审批：draft/rejected → pending_approval，并推送审批卡片。"""
@@ -177,7 +209,11 @@ def submit_approval(offer_id: str, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(row)
 
-    notify = notify_offer_event("pending_approval", row)
+    # 审批人需核对候选人信息与各环节评分，故随卡片一并带上
+    scores, candidate = _approval_context(db, row)
+    notify = notify_offer_event(
+        "pending_approval", row, scores=scores, candidate=candidate
+    )
     logger.info("Offer 提交审批通知结果 offer_id=%s: %s", row.id, notify)
     return ok({"offer": svc.serialize_offer(row), "notify": notify})
 
