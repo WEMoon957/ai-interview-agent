@@ -65,7 +65,8 @@ class Offer(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)
 
     # ── 审批 ─────────────────────────────────────────────────
-    approver_open_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    # 逗号分隔的审批人 open_id 列表（单个 open_id 35 字符；支持多审批人，故留足 512）
+    approver_open_id: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     approval_submitted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
