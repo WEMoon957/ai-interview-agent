@@ -371,8 +371,38 @@
   /* 明细表 + 动态流在宽屏独占整行（表格列多，半宽会挤） */
   :root[data-tier="lg"] .grid>.full-lg,:root[data-tier="xl"] .grid>.full-lg{grid-column:span 12}
 
-  /* 无 JS 兜底已删除：无 JS 时页面本身是永久加载态，放大空壳无收益；
-     data-tier 是唯一真源，避免 36 个 token 出现两份静默漂移。 */
+  /* ── 无 JS 兜底（契约要求，勿删）────────────────
+     脚本没跑时 data-tier 不存在，靠媒体查询给出与 lg/xl 完全一致的档位。
+     这里确实与上面的 token 有重复：契约要求「逐字一致」，改动档位时
+     两处必须同步（改档位 = 同时改 :root[data-tier] 与这里的对应块）。 */
+  @media (min-width:1800px){
+    :root:not([data-tier]){
+      --fs-1:18px;--fs-2:20px;--fs-3:22px;--fs-4:24px;
+      --fs-5:28px;--fs-6:32px;--fs-7:44px;--fs-8:56px;
+      --donut-fs:27px;--donut-fs-sm:25px;
+      --chart-h:320px;--chart-h-sm:272px;--chart-h-xs:240px;
+      --fr-idx:26px;--fr-nm:148px;--fr-vl:84px;--fr-rt:56px;--fr-track:32px;
+    }
+    :root:not([data-tier]) .app{max-width:2600px;padding:22px 28px 40px}
+    :root:not([data-tier]) .panel{padding:18px 20px 16px}
+    :root:not([data-tier]) .kpi{padding:16px 18px 14px}
+    :root:not([data-tier]) .kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
+    :root:not([data-tier]) .grid>.full-lg{grid-column:span 12}
+  }
+  @media (min-width:2500px){
+    :root:not([data-tier]){
+      --fs-1:24px;--fs-2:26px;--fs-3:28px;--fs-4:30px;
+      --fs-5:34px;--fs-6:40px;--fs-7:56px;--fs-8:64px;
+      --donut-fs:32px;--donut-fs-sm:29px;
+      --chart-h:380px;--chart-h-sm:320px;--chart-h-xs:280px;
+      --fr-idx:34px;--fr-nm:184px;--fr-vl:104px;--fr-rt:68px;--fr-track:38px;
+    }
+    :root:not([data-tier]) .app{max-width:min(calc(100% - 96px),3400px);padding:26px 32px 46px}
+    :root:not([data-tier]) .panel{padding:22px 24px 20px}
+    :root:not([data-tier]) .kpi{padding:20px 22px 18px}
+    :root:not([data-tier]) .kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
+    :root:not([data-tier]) .grid>.full-lg{grid-column:span 12}
+  }
 
   /* ── 窄屏（≤560）：手机单列，压缩内边距 ── */
   @media (max-width:560px){
