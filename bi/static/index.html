@@ -8,12 +8,11 @@
   :root{
     --bg:#070b16;
     --panel:rgba(16,23,40,.78);
-    --panel-solid:#0d1424;
     --border:rgba(96,132,204,.16);
     --border-soft:rgba(96,132,204,.09);
     --text:#e8eefc;
-    --muted:#8494b5;
-    --dim:#5b6884;
+    --muted:#a9b7d0;
+    --dim:#7f8dab;
     --blue:#4f8cff;
     --cyan:#22d3ee;
     --green:#34d399;
@@ -22,14 +21,46 @@
     --pink:#f472b6;
     --red:#f87171;
     --orange:#fb923c;
+    /* 面板标题竖条：默认走品牌蓝，可按面板覆写 */
+    --rule-accent:var(--blue);
+    /* 字号梯度（8 档基线；大屏由 [data-tier="lg"/"xl"] 整体上调） */
+    --fs-1:12px;--fs-2:13px;--fs-3:14px;--fs-4:15px;
+    --fs-5:18px;--fs-6:22px;--fs-7:30px;--fs-8:34px;
+    /* 环心大字：Offer 用 --donut-fs，汇总结论用 --donut-fs-sm */
+    --donut-fs:24px;--donut-fs-sm:22px;
+    /* 图表容器高度（与 ECharts 字号同步放大，避免大屏下留白失衡） */
+    --chart-h:286px;--chart-h-sm:240px;--chart-h-xs:210px;
+    /* 漏斗行网格（列宽随档位放大，7 行不横向溢出） */
+    --fr-idx:20px;--fr-nm:92px;--fr-vl:54px;--fr-rt:46px;--fr-track:24px;
+    --logo-box:40px;--icon-box:34px;
+  }
+
+  /* ── 大屏档：lg（≥1800 或 ?big=1）/ xl（≥2500 或 ?big=2） ──
+     档位由 <head> 内联脚本写入 :root[data-tier]；无 JS 时页面为加载态，不做字号兜底。 */
+  :root[data-tier="lg"]{
+    --fs-1:18px;--fs-2:20px;--fs-3:22px;--fs-4:24px;
+    --fs-5:28px;--fs-6:32px;--fs-7:44px;--fs-8:56px;
+    --donut-fs:27px;--donut-fs-sm:25px;
+    --chart-h:320px;--chart-h-sm:272px;--chart-h-xs:240px;
+    --fr-idx:26px;--fr-nm:148px;--fr-vl:84px;--fr-rt:56px;--fr-track:32px;
+    --logo-box:56px;--icon-box:48px;
+  }
+  :root[data-tier="xl"]{
+    --fs-1:24px;--fs-2:26px;--fs-3:28px;--fs-4:30px;
+    --fs-5:34px;--fs-6:40px;--fs-7:56px;--fs-8:64px;
+    --donut-fs:32px;--donut-fs-sm:29px;
+    --chart-h:380px;--chart-h-sm:320px;--chart-h-xs:280px;
+    --fr-idx:34px;--fr-nm:184px;--fr-vl:104px;--fr-rt:68px;--fr-track:38px;
+    --logo-box:64px;--icon-box:56px;
   }
   *{box-sizing:border-box}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:inherit}
   html,body{margin:0;padding:0}
   body{
     background:var(--bg);
     color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
-    font-size:14px;
+    font-size:var(--fs-3);
     -webkit-font-smoothing:antialiased;
     min-height:100vh;
   }
@@ -59,39 +90,60 @@
   .topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;margin-bottom:16px}
   .brand{display:flex;align-items:center;gap:13px}
   .logo{
-    width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;
-    font-size:19px;font-weight:700;color:#fff;letter-spacing:-1px;
+    width:var(--logo-box);height:var(--logo-box);border-radius:calc(var(--logo-box) * .275);display:flex;align-items:center;justify-content:center;
+    font-size:var(--fs-6);font-weight:700;color:#fff;letter-spacing:-1px;
     background:linear-gradient(140deg,#3b74ff,#22d3ee);
     box-shadow:0 6px 20px rgba(59,116,255,.35), inset 0 1px 0 rgba(255,255,255,.25);
   }
-  .brand h1{margin:0;font-size:19px;font-weight:650;letter-spacing:.3px}
-  .brand p{margin:3px 0 0;font-size:11.5px;color:var(--dim);letter-spacing:.5px;text-transform:uppercase}
+  .brand h1{margin:0;font-size:var(--fs-6);font-weight:600;letter-spacing:.3px}
+  .brand p{margin:3px 0 0;font-size:var(--fs-2);color:var(--dim);letter-spacing:.5px;text-transform:uppercase}
   .controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 
   .seg{display:inline-flex;background:rgba(16,23,40,.8);border:1px solid var(--border);border-radius:9px;padding:3px;gap:2px}
   .seg button{
-    border:0;background:transparent;color:var(--muted);font-size:12.5px;padding:5px 11px;border-radius:6px;
+    border:0;background:transparent;color:var(--muted);font-size:var(--fs-3);padding:5px 11px;border-radius:6px;
     cursor:pointer;transition:all .16s;font-family:inherit;white-space:nowrap;
   }
   .seg button:hover{color:var(--text);background:rgba(255,255,255,.045)}
   .seg button.on{background:linear-gradient(140deg,rgba(79,140,255,.9),rgba(59,116,255,.75));color:#fff;
     box-shadow:0 2px 10px rgba(79,140,255,.32)}
 
-  .stamp{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim);
+  .stamp{display:flex;align-items:center;gap:7px;font-size:var(--fs-2);color:var(--dim);
     background:rgba(16,23,40,.8);border:1px solid var(--border);border-radius:9px;padding:7px 12px;white-space:nowrap}
   .stamp .dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2.4s infinite}
+  .stamp.loading .dot{background:var(--blue);box-shadow:0 0 8px var(--blue)}
+  .stamp.stale .dot{background:#c08a94;box-shadow:none;animation:none}
+  .refresh-in{font-size:var(--fs-2);color:var(--dim);font-variant-numeric:tabular-nums}
+  .refresh-in:empty{display:none}
+  /* 命中缓存：仅当本次返回的 generated_at 与上次一致时出现（首次加载不出现） */
+  .cache-hint{font-size:var(--fs-1);color:var(--dim);padding:1px 6px;border-radius:5px;
+    background:rgba(255,255,255,.055);white-space:nowrap}
+  .cache-hint[hidden]{display:none}
+  /* 口径徽标：当前视图含不含联调/演示数据，一眼可辨 */
+  .scope-badge{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-2);color:var(--muted);
+    background:rgba(16,23,40,.8);border:1px solid var(--border);border-radius:9px;padding:7px 11px;white-space:nowrap}
+  .scope-badge::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--amber);flex:none}
+  .scope-badge[data-scope="real"]::before{background:var(--green)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 
   .icon-btn{
-    width:34px;height:34px;border-radius:9px;cursor:pointer;
+    position:relative;width:var(--icon-box);height:var(--icon-box);border-radius:calc(var(--icon-box) * .265);cursor:pointer;
     background:rgba(16,23,40,.8);border:1px solid var(--border);color:var(--muted);
-    font-size:15px;display:flex;align-items:center;justify-content:center;transition:all .16s;
+    font-size:var(--fs-5);display:flex;align-items:center;justify-content:center;transition:all .16s;
   }
+  /* 视觉尺寸保持紧凑，命中区扩到 44×44（触屏最小目标） */
+  .icon-btn::after{content:'';position:absolute;inset:-5px;border-radius:inherit}
   .icon-btn:hover{color:var(--blue);border-color:rgba(79,140,255,.4);transform:rotate(90deg)}
+
+  /* 顶栏下方的常驻口令提示（401 时出现，不自动消失） */
+  .auth-notice{
+    margin:0 0 14px;padding:10px 14px;border-radius:10px;font-size:var(--fs-2);line-height:1.7;
+    background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.35);color:#fca5a5;
+  }
 
   /* ── KPI ──────────────────────────────── */
   .kpis{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:11px;margin-bottom:14px}
-  @media (max-width:1500px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}}
+  @media (max-width:1366px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))}}
   @media (max-width:760px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
   .kpi{
     position:relative;overflow:hidden;padding:13px 15px 12px;border-radius:13px;
@@ -101,19 +153,39 @@
   .kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--accent,var(--blue))}
   .kpi::after{content:'';position:absolute;right:-30px;top:-30px;width:80px;height:80px;border-radius:50%;
     background:var(--accent,var(--blue));opacity:.07;filter:blur(16px)}
-  .kpi .l{font-size:11.5px;color:var(--muted);letter-spacing:.2px;margin-bottom:7px;white-space:nowrap}
-  .kpi .v{font-size:29px;font-weight:680;line-height:1;letter-spacing:-.8px;font-variant-numeric:tabular-nums;
-    color:var(--accent,var(--text))}
-  .kpi .v small{font-size:13px;font-weight:500;color:var(--muted);margin-left:2px;letter-spacing:0}
-  .kpi .s{font-size:11px;color:var(--dim);margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* 首屏骨架：首屏 8 格先占位，避免数据回填时布局跳动 */
+  .kpi.is-skeleton{min-height:104px;background:rgba(16,23,40,.55);border-style:dashed}
+  .kpi.is-skeleton::before,.kpi.is-skeleton::after{opacity:.04}
+  .kpi.primary{border-color:rgba(96,132,204,.28)}
+  .kpi .l{font-size:var(--fs-2);color:var(--muted);letter-spacing:.2px;margin-bottom:7px;white-space:nowrap}
+  /* 数值与单位同一基线上排布，且永不换行：位数变多时先降一档字号（.is-long），
+     而不是让「123,456」把「人」挤到下一行或被卡片裁掉 */
+  .kpi .v{font-size:var(--fs-7);font-weight:700;line-height:1;letter-spacing:-.8px;font-variant-numeric:tabular-nums;
+    color:var(--accent,var(--text));display:flex;align-items:baseline;gap:2px;white-space:nowrap}
+  .kpi .v.is-long{font-size:var(--fs-6);letter-spacing:-.4px}
+  .kpi.primary .v{font-size:var(--fs-8)}
+  .kpi.primary .v.is-long{font-size:var(--fs-7)}
+  .kpi .v small{font-size:var(--fs-3);font-weight:500;color:var(--muted);margin-left:1px;letter-spacing:0;flex:none}
+  /* 副行最多两行：口径标注（如「按 Offer 记录」）不能因为单行省略号被吃掉 */
+  .kpi .s{font-size:var(--fs-1);color:var(--dim);margin-top:7px;white-space:normal;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .kpi .s b{color:var(--muted);font-weight:600}
 
   /* ── 面板 ─────────────────────────────── */
   .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:13px}
-  @media (max-width:1180px){.grid>*{grid-column:span 12 !important}}
   .span-3{grid-column:span 3}.span-4{grid-column:span 4}.span-5{grid-column:span 5}
   .span-6{grid-column:span 6}.span-7{grid-column:span 7}.span-8{grid-column:span 8}
   .span-9{grid-column:span 9}.span-12{grid-column:span 12}
+  /* 中屏：宽面板整行，成对的 1/3 面板两列并行（不再无差别拉满整行） */
+  @media (max-width:1180px){
+    .grid>.span-5,.grid>.span-7,.grid>.span-8{grid-column:span 12}
+    .grid>.pair{grid-column:span 6}
+    .grid>.span-4{grid-column:span 6}
+  }
+  @media (max-width:760px){
+    .grid>.pair{grid-column:span 12}
+    .grid>.span-4{grid-column:span 12}
+  }
 
   .panel{
     position:relative;border-radius:15px;padding:14px 16px 12px;min-width:0;
@@ -121,27 +193,45 @@
     -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
   }
   .panel h2{
-    margin:0 0 10px;font-size:13.5px;font-weight:600;letter-spacing:.2px;
+    margin:0 0 10px;font-size:var(--fs-3);font-weight:600;letter-spacing:.2px;
     display:flex;align-items:center;gap:8px;color:#d6e0f5;
   }
-  .panel h2::before{content:'';width:3px;height:12px;border-radius:2px;background:var(--accent,var(--blue));flex:none}
-  .panel h2 .hint{margin-left:auto;font-size:11px;font-weight:400;color:var(--dim);letter-spacing:0}
-  .chart{width:100%;height:286px}
-  .chart.h240{height:240px}
-  .chart.h210{height:210px}
+  .panel h2::before{content:'';width:3px;height:12px;border-radius:2px;background:var(--rule-accent);flex:none}
+  .panel h2 .hint{margin-left:auto;font-size:var(--fs-1);font-weight:400;color:var(--dim);letter-spacing:0;text-align:right}
+  .chart{width:100%;height:var(--chart-h)}
+  .chart.h240{height:var(--chart-h-sm)}
+  .chart.h210{height:var(--chart-h-xs)}
 
   .chart-wrap{position:relative}
   .chart-wrap.is-empty::after{
     content:'暂无数据';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-    color:#3f4a63;font-size:12.5px;letter-spacing:1px;pointer-events:none;
+    color:var(--dim);font-size:var(--fs-3);letter-spacing:1px;pointer-events:none;
+  }
+
+  /* ── 空 / 加载 / 错误态 ────────────────── */
+  .state{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:120px;padding:26px;
+    color:var(--dim);font-size:var(--fs-2);text-align:center;line-height:1.8}
+  .state.is-loading{flex-direction:row;color:var(--muted)}
+  .state.is-loading::before{content:'';width:14px;height:14px;margin-right:8px;border-radius:50%;
+    border:2px solid rgba(120,150,200,.25);border-top-color:var(--blue);animation:spin .8s linear infinite}
+  .state small{display:block;color:var(--dim);font-size:var(--fs-2);margin-top:4px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .na{color:var(--dim)}
+
+  /* ── 口径提示 ─────────────────────────── */
+  .notice{
+    margin-top:10px;padding:8px 10px;border-left:2px solid var(--amber);
+    background:rgba(251,191,36,.08);color:var(--amber);font-size:var(--fs-2);line-height:1.7;
   }
 
   /* ── 漏斗 ─────────────────────────────── */
   .funnel{display:flex;flex-direction:column;gap:9px;padding-top:2px}
-  .fr{display:grid;grid-template-columns:20px 92px 1fr 46px 54px;align-items:center;gap:9px}
-  .fr .idx{font-size:10px;color:#3f4a63;font-variant-numeric:tabular-nums;letter-spacing:.5px}
-  .fr .nm{font-size:12.5px;color:#a9b7d0;white-space:nowrap}
-  .fr .track{height:24px;border-radius:6px;background:rgba(255,255,255,.035);overflow:hidden;position:relative}
+  /* 值列用 minmax(令牌, auto)：正常数值仍按令牌宽度对齐，
+     出现 6 位以上时才让该列自己撑开，绝不与右侧转化率列压在一起 */
+  .fr{display:grid;grid-template-columns:var(--fr-idx) var(--fr-nm) 1fr minmax(var(--fr-vl),auto) var(--fr-rt);align-items:center;gap:9px}
+  .fr .idx{font-size:var(--fs-1);color:var(--dim);font-variant-numeric:tabular-nums;letter-spacing:.5px}
+  .fr .nm{font-size:var(--fs-3);color:#a9b7d0;white-space:nowrap}
+  .fr .track{height:var(--fr-track);border-radius:6px;background:rgba(255,255,255,.035);overflow:hidden;position:relative}
   .fr .fill{
     height:100%;border-radius:6px;min-width:2px;position:relative;
     transition:width .7s cubic-bezier(.22,1,.36,1);
@@ -151,30 +241,60 @@
     content:'';position:absolute;inset:0;border-radius:6px;
     background:linear-gradient(90deg,rgba(255,255,255,.16),transparent 55%);
   }
-  .fr .vl{font-size:15px;font-weight:650;text-align:right;font-variant-numeric:tabular-nums;color:#e3ebfa}
-  .fr .rt{font-size:11px;text-align:right;color:var(--dim);font-variant-numeric:tabular-nums}
+  .fr .vl{font-size:var(--fs-5);font-weight:600;text-align:right;font-variant-numeric:tabular-nums;color:#e3ebfa}
+  .fr .rt{font-size:var(--fs-1);text-align:right;color:var(--dim);font-variant-numeric:tabular-nums}
   .fr .rt.hot{color:var(--green)}
   .fr .rt.cold{color:var(--amber)}
+  .fr .rt.is-skip{color:var(--dim)}
+  .fr .rt.is-empty{color:var(--dim)}
   .funnel-total{
     display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:11px;
-    border-top:1px solid var(--border-soft);font-size:12px;color:var(--muted);
+    border-top:1px solid var(--border-soft);font-size:var(--fs-2);color:var(--muted);
   }
-  .funnel-total b{font-size:17px;font-weight:680;color:var(--green);font-variant-numeric:tabular-nums;margin:0 2px}
+  .funnel-total b{font-size:var(--fs-5);font-weight:700;color:var(--green);font-variant-numeric:tabular-nums;margin:0 2px}
+
+  /* ── 各环节均分 ───────────────────────── */
+  .avg-strip{display:flex;gap:18px;flex-wrap:wrap;margin:0 0 8px;font-size:var(--fs-2);color:var(--dim)}
+  .avg-item{display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap}
+  .avg-item b{font-size:var(--fs-4);color:var(--text);font-weight:600;margin-right:4px}
+  .avg-item i{font-style:normal}
 
   /* ── 表格 ─────────────────────────────── */
-  .table-wrap{max-height:330px;overflow:auto}
-  table{width:100%;border-collapse:collapse;font-size:12.5px}
-  thead th{
-    position:sticky;top:0;z-index:2;text-align:left;font-weight:500;color:var(--dim);font-size:11.5px;
-    padding:7px 9px;background:#0e1626;border-bottom:1px solid var(--border);white-space:nowrap;
+  .table-tools{display:flex;gap:8px;align-items:center;margin:0 0 9px;flex-wrap:wrap}
+  .table-tools input[type="search"]{
+    flex:1;min-width:110px;height:36px;padding:0 11px;border-radius:8px;font-family:inherit;
+    background:rgba(16,23,40,.8);border:1px solid var(--border);color:var(--text);
+    font-size:var(--fs-2);-webkit-appearance:none;appearance:none;
   }
+  .table-tools input[type="search"]::placeholder{color:var(--dim)}
+  .table-tools input[type="search"]:focus{outline:none;border-color:rgba(79,140,255,.45)}
+  .sort-btn{
+    position:relative;height:36px;padding:0 12px;border-radius:8px;cursor:pointer;font-family:inherit;
+    background:rgba(16,23,40,.8);border:1px solid var(--border);color:var(--muted);
+    font-size:var(--fs-2);white-space:nowrap;transition:all .16s;
+  }
+  .sort-btn::after{content:'';position:absolute;inset:-4px;border-radius:inherit}
+  .sort-btn:hover{color:var(--text);border-color:rgba(79,140,255,.3)}
+  .sort-btn[aria-pressed="true"]{color:#fff;background:rgba(79,140,255,.22);border-color:rgba(79,140,255,.5)}
+
+  .table-wrap{max-height:330px;overflow:auto}
+  table{width:100%;border-collapse:collapse;font-size:var(--fs-3)}
+  thead th{
+    position:sticky;top:0;z-index:2;text-align:left;font-weight:500;color:var(--dim);font-size:var(--fs-2);
+    padding:7px 9px;background:#0e1424;border-bottom:1px solid var(--border);white-space:nowrap;
+  }
+  /* 首列吸顶 + 吸左，横向滚动时姓名始终可见 */
+  thead th:first-child{z-index:3;position:sticky;left:0;background:#0e1424}
+  tbody td:first-child{position:sticky;left:0;background:#0e1424;z-index:1}
   tbody td{padding:8px 9px;border-bottom:1px solid rgba(255,255,255,.038);color:#c2cde4;white-space:nowrap}
   tbody tr:hover td{background:rgba(79,140,255,.06)}
+  tbody tr:hover td:first-child{background:#152036}
   td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-  td.name{color:#e8eefc;font-weight:550}
+  td.name{color:#e8eefc;font-weight:500}
   td.job{max-width:220px;overflow:hidden;text-overflow:ellipsis;color:#9aa9c4}
+  td.ts{color:var(--dim);font-size:var(--fs-2);font-variant-numeric:tabular-nums}
 
-  .tag{display:inline-block;padding:1.5px 8px;border-radius:9999px;font-size:10.5px;line-height:1.7;font-weight:500}
+  .tag{display:inline-block;padding:1.5px 8px;border-radius:9999px;font-size:var(--fs-1);line-height:1.7;font-weight:500}
   .tag.g{background:rgba(52,211,153,.14);color:#6ee7b7}
   .tag.y{background:rgba(251,191,36,.14);color:#fcd34d}
   .tag.r{background:rgba(248,113,113,.14);color:#fca5a5}
@@ -193,33 +313,134 @@
   .feed-dot.onboard{background:var(--green);color:var(--green)}
   .feed-body{min-width:0;flex:1}
   .feed-top{display:flex;align-items:baseline;gap:7px}
-  .feed-who{font-size:12.5px;color:#dfe7f7;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .feed-kind{font-size:10.5px;color:var(--dim);padding:0 6px;border-radius:4px;background:rgba(255,255,255,.045);white-space:nowrap}
-  .feed-sub{font-size:11px;color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .feed-ts{font-size:10.5px;color:#4f5b76;margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .feed-who{font-size:var(--fs-3);color:#dfe7f7;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .feed-kind{font-size:var(--fs-1);color:var(--dim);padding:0 6px;border-radius:4px;background:rgba(255,255,255,.045);white-space:nowrap}
+  .feed-sub{font-size:var(--fs-1);color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .feed-ts{font-size:var(--fs-1);color:var(--dim);margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
 
   footer{
     margin-top:16px;padding-top:12px;border-top:1px solid var(--border-soft);
-    display:flex;gap:18px;flex-wrap:wrap;font-size:11px;color:#48536e;line-height:1.9;
+    display:flex;gap:18px;flex-wrap:wrap;font-size:var(--fs-1);color:var(--dim);line-height:1.9;
   }
-  footer b{color:#5d6b88;font-weight:600}
+  footer b{color:var(--muted);font-weight:600}
 
   .err{
     position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:60;
     background:rgba(60,20,26,.95);border:1px solid rgba(248,113,113,.4);color:#fca5a5;
-    padding:9px 18px;border-radius:10px;font-size:12.5px;box-shadow:0 10px 30px rgba(0,0,0,.5);
+    padding:9px 18px;border-radius:10px;font-size:var(--fs-3);box-shadow:0 10px 30px rgba(0,0,0,.5);
     display:none;
   }
   .err.on{display:block}
+
+  /* ── 401 全屏故障态 ────────────────────── */
+  /* 不放重试按钮：口令失效重试也过不去，只说明发生了什么、从何时开始，
+     并承诺退避重试成功后自动恢复，避免用户对着一个点不动的按钮较劲。 */
+  .fullscreen-state{
+    position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;padding:32px;text-align:center;
+    background:radial-gradient(circle at 50% 38%, rgba(60,20,26,.55), rgba(5,8,14,.95) 62%);
+    -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  }
+  .fullscreen-state[hidden]{display:none}
+  .fs-inner{max-width:560px}
+  .fs-mark{
+    width:52px;height:52px;margin:0 auto 18px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:var(--fs-6);font-weight:700;color:#fca5a5;
+    background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.45);
+  }
+  .fullscreen-state h3{margin:0 0 10px;font-size:var(--fs-6);font-weight:600;color:#f3d7d7}
+  .fullscreen-state p{margin:0 0 8px;font-size:var(--fs-3);line-height:1.8;color:var(--muted)}
+  .fullscreen-state code{font-family:inherit;color:#fca5a5;background:rgba(248,113,113,.12);padding:1px 6px;border-radius:5px}
+  .fullscreen-state .fs-since{font-size:var(--fs-2);color:var(--dim);font-variant-numeric:tabular-nums}
+  .fullscreen-state .fs-since:empty{display:none}
   ::-webkit-scrollbar{width:7px;height:7px}
   ::-webkit-scrollbar-track{background:transparent}
   ::-webkit-scrollbar-thumb{background:rgba(120,150,200,.2);border-radius:4px}
   ::-webkit-scrollbar-thumb:hover{background:rgba(120,150,200,.32)}
+
+  /* ── 大屏档位布局 ───────────────────────
+     字号/图表高/漏斗列宽由 :root[data-tier] 的 token 控制，
+     这里只管随档位变化的盒模型与列数。 */
+  :root[data-tier="lg"] .app{max-width:2600px;padding:22px 28px 40px}
+  :root[data-tier="xl"] .app{max-width:min(calc(100% - 96px),3400px);padding:26px 32px 46px}
+  :root[data-tier="lg"] .panel,:root[data-tier="xl"] .panel{padding:18px 20px 16px}
+  :root[data-tier="xl"] .panel{padding:22px 24px 20px}
+  :root[data-tier="lg"] .kpi,:root[data-tier="xl"] .kpi{padding:16px 18px 14px}
+  :root[data-tier="xl"] .kpi{padding:20px 22px 18px}
+  /* 大屏横向空间足够，KPI 从 8 列改 4 列：数字可以更大、辅助行可读 */
+  :root[data-tier="lg"] .kpis,:root[data-tier="xl"] .kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
+  /* 明细表 + 动态流在宽屏独占整行（表格列多，半宽会挤） */
+  :root[data-tier="lg"] .grid>.full-lg,:root[data-tier="xl"] .grid>.full-lg{grid-column:span 12}
+
+  /* 无 JS 兜底已删除：无 JS 时页面本身是永久加载态，放大空壳无收益；
+     data-tier 是唯一真源，避免 36 个 token 出现两份静默漂移。 */
+
+  /* ── 窄屏（≤560）：手机单列，压缩内边距 ── */
+  @media (max-width:560px){
+    .app{padding:12px 12px 28px}
+    .panel{padding:12px 12px 10px}
+    /* 契约给的 72px 装不下 6 字环节名（13px × 6 = 78px），会压到进度条上；
+       放到 80px 保住单行显示，进度条让出 8px */
+    .funnel .fr{grid-template-columns:18px 80px 1fr 40px 44px;gap:6px}
+    .err{max-width:calc(100vw - 32px)}
+    .topbar{gap:10px}
+    .seg button{min-height:44px;padding:8px 10px}
+    .icon-btn{width:max(44px, var(--icon-box));height:max(44px, var(--icon-box))}
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
+  }
 </style>
+<script>
+/* 大屏档位判定（尽早执行，避免首帧按小档字号渲染后再跳大）。
+   ?big=1 → lg，?big=2 → xl；否则按视口 1800 / 2500 断点。
+   xl 判定优先：4K 屏上带 ?big=1 不会把已够大的屏降级。 */
+(function () {
+  var root = document.documentElement
+  var mqLg = window.matchMedia('(min-width:1800px)')
+  var mqXl = window.matchMedia('(min-width:2500px)')
+  var params = new URLSearchParams(location.search)
+  var big = params.get('big')
+
+  function computeTier() {
+    if (big === '2' || mqXl.matches) return 'xl'
+    if (big === '1' || mqLg.matches) return 'lg'
+    return ''
+  }
+
+  function sync() {
+    var next = computeTier()
+    if (next) root.setAttribute('data-tier', next)
+    else root.removeAttribute('data-tier')
+    // 主脚本据此重算 ECharts 字号、重取数据；初始化前的这次派发没有人监听，无害
+    window.dispatchEvent(new CustomEvent('bi-tier-change', { detail: { tier: next } }))
+  }
+
+  sync()
+  // 大屏看板常被窗口拖动/投屏切换，跨档时同步一次
+  if (mqLg.addEventListener) {
+    mqLg.addEventListener('change', sync)
+    mqXl.addEventListener('change', sync)
+  } else if (mqLg.addListener) {
+    mqLg.addListener(sync)
+    mqXl.addListener(sync)
+  }
+})()
+</script>
 </head>
 <body>
 <div id="progress"></div>
-<div class="err" id="err"></div>
+<div class="err" id="err" role="status" aria-live="polite"></div>
+
+<div class="fullscreen-state" id="fullscreenState" role="alert" aria-live="assertive" hidden>
+  <div class="fs-inner">
+    <div class="fs-mark" aria-hidden="true">!</div>
+    <h3>看板暂时无法加载</h3>
+    <p>访问口令已过期或无效，请在地址后加上 <code>?token=</code> 重新打开本页。</p>
+    <p class="fs-since" id="fsSince"></p>
+    <p>期间页面每 5 分钟自动重试一次，接口恢复后会自行隐藏本提示。</p>
+  </div>
+</div>
 
 <div class="app">
   <header class="topbar">
@@ -232,75 +453,89 @@
     </div>
 
     <div class="controls">
-      <div class="seg" id="daysSeg">
-        <button data-days="7">7 天</button>
-        <button data-days="30" class="on">30 天</button>
-        <button data-days="90">90 天</button>
-        <button data-days="0">全部</button>
+      <div class="seg" id="daysSeg" role="group" aria-label="时间范围">
+        <button data-days="7" aria-pressed="false">7 天</button>
+        <button data-days="30" class="on" aria-pressed="true">30 天</button>
+        <button data-days="90" aria-pressed="false">90 天</button>
+        <button data-days="0" aria-pressed="false">全部</button>
       </div>
-      <div class="seg" id="scopeSeg">
-        <button data-scope="all" class="on">全部数据</button>
-        <button data-scope="real">仅真实岗位</button>
+      <div class="seg" id="scopeSeg" role="group" aria-label="数据范围">
+        <button data-scope="all" class="on" aria-pressed="true">全部数据</button>
+        <button data-scope="real" aria-pressed="false">仅真实岗位</button>
       </div>
-      <div class="stamp"><span class="dot"></span><span id="updatedAt">连接中…</span></div>
-      <button class="icon-btn" id="refreshBtn" title="立即刷新">⟳</button>
+      <span class="scope-badge" id="scopeBadge" data-scope="all">含联调/演示数据</span>
+      <div class="stamp" id="stamp" role="status" aria-live="polite">
+        <span class="dot"></span><span id="updatedAt">连接中…</span><span id="fetchedAt" class="refresh-in"></span><span id="refreshIn" class="refresh-in"></span><span class="cache-hint" id="cacheHint" hidden>命中缓存</span>
+      </div>
+      <button class="icon-btn" id="refreshBtn" title="立即刷新" aria-label="立即刷新">⟳</button>
     </div>
   </header>
 
-  <section class="kpis" id="kpis"></section>
+  <div class="auth-notice" id="authNotice" role="alert" hidden>
+    访问口令已过期，请在地址后加 ?token= 重新打开
+  </div>
+
+  <section class="kpis" id="kpis" aria-label="关键指标"><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div></section>
 
   <main class="grid">
-    <section class="panel span-5">
+    <section class="panel span-5" style="--rule-accent:var(--blue)" aria-label="招聘转化漏斗">
       <h2>招聘转化漏斗<span class="hint">按建档候选人去重 · 存在跳过环节时该步显示 —</span></h2>
       <div class="funnel" id="funnel"></div>
       <div class="funnel-total">
         <span>整体转化率（建档 → 入职）</span>
         <span><b id="overallRate">—</b>%</span>
       </div>
+      <div class="notice" id="cohortNotice" hidden>7 天窗口按「窗口内建档」追踪，入职率天然偏低；建议对比 90 天或全部。</div>
     </section>
 
-    <section class="panel span-7">
-      <h2>每日动态趋势<span class="hint">按事件发生日统计</span></h2>
+    <section class="panel span-7" style="--rule-accent:var(--cyan)" aria-label="每日动态趋势">
+      <h2>每日动态趋势<span class="hint" id="trendHint">按事件发生日统计</span></h2>
       <div class="chart-wrap" id="wrapTrend"><div class="chart" id="chTrend"></div></div>
     </section>
 
-    <section class="panel span-7">
-      <h2>岗位招聘进展<span class="hint">按候选人数量排序 · Top 12</span></h2>
+    <section class="panel span-7" style="--rule-accent:var(--blue)" aria-label="岗位招聘进展">
+      <h2>岗位招聘进展<span class="hint">按候选人数量排序 · Top 8</span></h2>
       <div class="chart-wrap" id="wrapJobs"><div class="chart h240" id="chJobs"></div></div>
     </section>
 
-    <section class="panel span-5">
+    <section class="panel span-5" style="--rule-accent:var(--cyan)" aria-label="候选人来源渠道">
       <h2>候选人来源渠道<span class="hint">按建档分布</span></h2>
       <div class="chart-wrap" id="wrapChannel"><div class="chart h240" id="chChannel"></div></div>
     </section>
 
-    <section class="panel span-7">
-      <h2>各环节得分分布<span class="hint" id="scoreAvg">百分制 · 分 6 档</span></h2>
+    <section class="panel span-7" style="--rule-accent:var(--purple)" aria-label="各环节得分分布">
+      <h2>各环节得分分布<span class="hint">百分制 · 分 6 档</span></h2>
+      <div class="avg-strip" id="scoreAvg"></div>
       <div class="chart-wrap" id="wrapScore"><div class="chart" id="chScore"></div></div>
     </section>
 
-    <section class="panel span-5">
-      <h2>Offer 状态<span class="hint">按 Offer 记录数</span></h2>
+    <section class="panel span-5" style="--rule-accent:var(--amber)" aria-label="Offer 状态">
+      <h2>Offer 状态<span class="hint">按 Offer 记录 · 含草稿/驳回</span></h2>
       <div class="chart-wrap" id="wrapOffer"><div class="chart" id="chOffer"></div></div>
     </section>
 
-    <section class="panel span-4">
+    <section class="panel span-4 pair" style="--rule-accent:var(--green)" aria-label="汇总结论分布">
       <h2>汇总结论分布<span class="hint">AI 综合评级</span></h2>
       <div class="chart-wrap" id="wrapVerdict"><div class="chart h210" id="chVerdict"></div></div>
     </section>
 
-    <section class="panel span-4">
+    <section class="panel span-4 pair" style="--rule-accent:var(--purple)" aria-label="面试官工作量">
       <h2>面试官工作量<span class="hint">线下复试场次</span></h2>
       <div class="chart-wrap" id="wrapInterviewer"><div class="chart h210" id="chInterviewer"></div></div>
     </section>
 
-    <section class="panel span-4">
-      <h2>门店 Offer 分布<span class="hint">Top 8</span></h2>
+    <section class="panel span-4" style="--rule-accent:var(--green)" aria-label="门店 Offer 分布">
+      <h2>门店 Offer 分布<span class="hint">Top 6</span></h2>
       <div class="chart-wrap" id="wrapStore"><div class="chart h210" id="chStore"></div></div>
     </section>
 
-    <section class="panel span-8">
-      <h2>候选人汇总明细<span class="hint">最近 25 条 · 只读</span></h2>
+    <section class="panel span-8 full-lg" style="--rule-accent:var(--blue)" aria-label="候选人汇总明细">
+      <h2>候选人汇总明细<span class="hint">最近 25 条 · 按汇总时间</span></h2>
+      <div class="table-tools">
+        <input id="tableSearch" type="search" placeholder="搜索姓名 / 岗位" aria-label="搜索候选人" autocomplete="off" />
+        <button class="sort-btn" data-sort="final" aria-pressed="false">最终分</button>
+        <button class="sort-btn" data-sort="time" aria-pressed="false">时间</button>
+      </div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -310,14 +545,14 @@
               <th>结论</th><th>阶段</th><th>更新时间</th>
             </tr>
           </thead>
-          <tbody id="recentBody"><tr><td colspan="9" style="color:#48536e;padding:26px;text-align:center">加载中…</td></tr></tbody>
+          <tbody id="recentBody"><tr><td colspan="9"><div class="state is-loading">加载中…</div></td></tr></tbody>
         </table>
       </div>
     </section>
 
-    <section class="panel span-4">
+    <section class="panel span-4 full-lg" style="--rule-accent:var(--cyan)" aria-label="最新动态">
       <h2>最新动态<span class="hint">建档 / 面试 / Offer / 入职</span></h2>
-      <div class="feed" id="feed"></div>
+      <div class="feed" id="feed"><div class="state is-loading">加载中…</div></div>
     </section>
   </main>
 
@@ -334,26 +569,79 @@
   'use strict'
 
   // ── 主题常量 ─────────────────────────────
+  // 图表内字号一律不写死：FS 从 CSS 的 --fs-1 读出（基线 12 / lg 18 / xl 24），
+  // 其余由 FS_MAP 派生，几何尺寸用 g() 按同比例放大，
+  // 这样 1440 / 1920 / 4K 三档下图表与 DOM 的字号阶梯始终同步。
   const C = {
     blue: '#4f8cff', cyan: '#22d3ee', green: '#34d399', amber: '#fbbf24',
     purple: '#a78bfa', pink: '#f472b6', red: '#f87171', orange: '#fb923c',
-    grey: '#5b6884', text: '#e8eefc', muted: '#8494b5', dim: '#5b6884',
+    grey: '#8494b5', text: '#e8eefc', muted: '#8494b5', dim: '#7f8dab',
   }
+  let FS = 12                                   // 轴标签/图例基准字号（px）
+  let FS_MAP = { sm: 12, md: 13 }
+  let DONUT_FS = 24                             // Offer 环心大字
+  let DONUT_FS_SM = 22                          // 汇总结论环心大字
+  const BASE_FS = 12                            // 下面所有手调像素值的基准档
+  // 几何等比：v 是按 12px 基线手调的像素，档位上移后同比例放大
+  const g = (v) => Math.round((v * FS) / BASE_FS)
+
+  const readPx = (name, fallback) => {
+    const n = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name))
+    return Number.isFinite(n) && n > 0 ? n : fallback
+  }
+
   const AXIS_LINE = { lineStyle: { color: '#243052' } }
-  const AXIS_LABEL = { color: '#7f8dab', fontSize: 11 }
+  const AXIS_LABEL = { color: '#7f8dab', fontSize: FS }
   const SPLIT_LINE = { lineStyle: { color: 'rgba(120,150,200,.075)' } }
   const TOOLTIP = {
     backgroundColor: 'rgba(10,16,30,.95)',
     borderColor: 'rgba(96,132,204,.32)',
     borderWidth: 1,
     padding: [8, 12],
-    textStyle: { color: '#e8eefc', fontSize: 12 },
+    textStyle: { color: '#e8eefc', fontSize: FS_MAP.md },
     extraCssText: 'border-radius:10px;box-shadow:0 10px 34px rgba(0,0,0,.55);backdrop-filter:blur(8px)',
   }
   const LEGEND = {
-    textStyle: { color: '#8494b5', fontSize: 11 },
+    textStyle: { color: '#8494b5', fontSize: FS },
     itemWidth: 9, itemHeight: 9, icon: 'roundRect',
   }
+
+  // 每次渲染前调用：档位切换后重新取一次 CSS 值，避免图表与 DOM 各说各话
+  function applyChartFontScale() {
+    FS = Math.round(readPx('--fs-1', BASE_FS))
+    FS_MAP = { sm: Math.round(readPx('--fs-1', BASE_FS)), md: Math.round(readPx('--fs-2', 13)) }
+    DONUT_FS = Math.round(readPx('--donut-fs', 24))
+    DONUT_FS_SM = Math.round(readPx('--donut-fs-sm', 22))
+    AXIS_LABEL.fontSize = FS
+    LEGEND.textStyle.fontSize = FS
+    LEGEND.itemWidth = Math.max(8, g(9))
+    LEGEND.itemHeight = Math.max(8, g(9))
+    TOOLTIP.textStyle.fontSize = FS_MAP.md
+    TOOLTIP.padding = [g(8), g(12)]
+  }
+
+  // ── 图表几何/轴契约 ───────────────────────
+  // 全部改成惰性函数：grid/圆角等尺寸依赖当前档位的 FS
+  const VALUE_AXIS = {
+    type: 'value', axisLine: { show: false }, axisTick: { show: false },
+    axisLabel: AXIS_LABEL, splitLine: SPLIT_LINE, minInterval: 1,
+  }
+  const catAxis = (data, extra) => ({
+    type: 'category', data, axisLine: { show: false }, axisTick: { show: false },
+    axisLabel: Object.assign({}, AXIS_LABEL, { color: '#a9b7d0' }, extra),
+  })
+  const GRID_H = () => ({ left: g(2), right: g(44), top: g(6), bottom: g(4), containLabel: true })
+  const GRID_H_WIDE = () => ({ left: g(2), right: g(78), top: g(6), bottom: g(4), containLabel: true })
+  const GRID_V = () => ({ left: g(34), right: g(10), top: g(34), bottom: g(24) })
+  // 趋势图是双 Y 轴，左右都要给轴标签留位置，不能直接用 GRID_V
+  const GRID_V_DUAL = () => ({ left: g(42), right: g(42), top: g(36), bottom: g(26) })
+  const BAR_R_H = () => [0, g(4), g(4), 0]
+  const BAR_R_V = () => [g(4), g(4), 0, 0]
+  const donutCenter = (total, sub, fs, top) => ({
+    text: String(total), subtext: sub, left: 'center', top: top || '33%',
+    textStyle: { color: '#e8eefc', fontSize: fs, fontWeight: 600 },
+    subtextStyle: { color: '#7f8dab', fontSize: FS_MAP.sm },
+  })
 
   const STAGE_LABEL = {
     screened: '已初筛', ai_interview: 'AI 面试中', ai_done: 'AI 面试完成',
@@ -362,7 +650,19 @@
   const VERDICT_CLASS = { '强烈推荐': 'g', '推荐': 'b', '待定': 'y', '不推荐': 'r' }
 
   // ── 状态 ────────────────────────────────
-  const state = { days: 30, scope: 'all', timer: null, countdown: 60, charts: [] }
+  const state = {
+    days: 30, scope: 'all', timer: null, countdown: 60, charts: [],
+    failCount: 0,          // 连续失败次数：决定退避间隔，成功后清零
+    lastSuccess: null,     // 最近一次成功渲染的时间（Date），用于「数据已过期」文案
+    lastPayload: null,     // 最近一次成功的完整 payload，供档位切换时本地重绘图表
+    prevGeneratedAt: null, // 上一次成功渲染的 generated_at，用于识别「命中缓存」
+    lastPayload: null,     // 最近一次成功渲染的完整 payload，跨档重画图表用（初值必须是 null）
+    authBlockedAt: null,   // 首次 401 的时间，用于「故障始于 HH:MM」
+    recentRows: [],        // 明细表原始行，供搜索/排序重渲染
+    sortKey: null,         // 'final' | 'time' | null
+    sortDesc: true,
+    query: '',
+  }
   const $ = (id) => document.getElementById(id)
 
   // 支持 /?days=90&scope=real 直接定位视图（大屏部署时把固定视图写死进 URL）
@@ -377,11 +677,16 @@
     const s = p.get('scope')
     if (s === 'all' || s === 'real') state.scope = s
     document.querySelectorAll('#daysSeg button').forEach((b) => {
-      b.classList.toggle('on', Number(b.dataset.days) === state.days)
+      const on = Number(b.dataset.days) === state.days
+      b.classList.toggle('on', on)
+      b.setAttribute('aria-pressed', String(on))
     })
     document.querySelectorAll('#scopeSeg button').forEach((b) => {
-      b.classList.toggle('on', b.dataset.scope === state.scope)
+      const on = b.dataset.scope === state.scope
+      b.classList.toggle('on', on)
+      b.setAttribute('aria-pressed', String(on))
     })
+    syncScopeBadge()
   }
 
   function syncUrl() {
@@ -389,6 +694,15 @@
     u.searchParams.set('days', String(state.days))
     u.searchParams.set('scope', state.scope)
     history.replaceState(null, '', u)
+  }
+
+  // 口径徽标：把「现在看的是全部数据还是仅真实岗位」直接写在页面上，
+  // 不依赖用户去回读分段控件的小字
+  function syncScopeBadge() {
+    const el = $('scopeBadge')
+    if (!el) return
+    el.dataset.scope = state.scope
+    el.textContent = state.scope === 'real' ? '仅真实岗位' : '含联调/演示数据'
   }
 
   // ── 工具 ────────────────────────────────
@@ -425,20 +739,21 @@
   // ── KPI ─────────────────────────────────
   function renderKPI(d) {
     const k = d.kpi
+    // 顺序按「结果 → 过程 → 规模」：前两张是老板真正关心的结果指标，加大字号
     const cards = [
+      { l: '入职到岗', v: fmtInt(k.onboarded), u: '人', s: `到岗率 <b>${fmtPct(k.onboard_rate)}</b> · 未报到 <b>${k.no_show}</b>`, c: C.green, p: true },
+      { l: 'Offer 接受率', v: k.accept_rate == null ? '—' : (k.accept_rate * 100).toFixed(0), u: k.accept_rate == null ? '' : '%', s: `已决 <b>${d.offer_metrics.decided}</b> 份 · 接受 <b>${d.offer_metrics.accepted}</b>`, c: C.orange, p: true },
       { l: '候选人建档', v: fmtInt(k.candidates), u: '人', s: `${d.meta.window_label} · 在招 <b>${k.active_jobs}</b> 岗`, c: C.blue },
       { l: '完成 AI 面试', v: fmtInt(k.ai_done), u: '人', s: `完成率 <b>${fmtPct(k.ai_rate)}</b>`, c: C.cyan },
       { l: '完成线下复试', v: fmtInt(k.offline_done), u: '人', s: `占 AI 面试 <b>${fmtPct(k.ai_done ? k.offline_done / k.ai_done : null)}</b>`, c: C.purple },
-      { l: '发出 Offer', v: fmtInt(k.offer_sent), u: '份', s: `待审批 <b>${k.offer_pending}</b> 份`, c: C.amber },
-      { l: 'Offer 接受率', v: k.accept_rate == null ? '—' : (k.accept_rate * 100).toFixed(0), u: k.accept_rate == null ? '' : '%', s: `已决 <b>${d.offer_metrics.decided}</b> 份 · 接受 <b>${d.offer_metrics.accepted}</b>`, c: C.orange },
-      { l: '入职到岗', v: fmtInt(k.onboarded), u: '人', s: `到岗率 <b>${fmtPct(k.onboard_rate)}</b> · 未报到 <b>${k.no_show}</b>`, c: C.green },
+      { l: '发出 Offer', v: fmtInt(k.offer_sent), u: '份', s: `按 Offer 记录 · 待审批 <b>${k.offer_pending}</b> 份`, c: C.amber },
       { l: '平均招聘周期', v: k.days_to_offer == null ? '—' : k.days_to_offer.toFixed(1), u: k.days_to_offer == null ? '' : '天', s: `建档 → 发 Offer · 到岗 <b>${k.days_to_onboard == null ? '—' : k.days_to_onboard.toFixed(1)}</b> 天`, c: C.pink },
-      { l: '在招岗位', v: fmtInt(k.active_jobs), u: '个', s: `岗位总数 <b>${d.meta.total_jobs}</b>`, c: C.grey },
+      { l: '在招岗位', v: fmtInt(k.active_jobs), u: '个', s: `岗位总数 <b>${d.meta.total_jobs}</b>`, c: C.muted },
     ]
     $('kpis').innerHTML = cards.map((c) => `
-      <div class="kpi" style="--accent:${c.c}">
+      <div class="kpi${c.p ? ' primary' : ''}" style="--accent:${c.c}">
         <div class="l">${c.l}</div>
-        <div class="v">${c.v}${c.u ? `<small>${c.u}</small>` : ''}</div>
+        <div class="v${String(c.v).length > 5 ? ' is-long' : ''}">${c.v}${c.u ? `<small>${c.u}</small>` : ''}</div>
         <div class="s">${c.s}</div>
       </div>`).join('')
   }
@@ -467,6 +782,7 @@
       let cls = ''
       if (i === 0) {
         rateText = v ? '100%' : '—'
+        cls = v ? '' : 'is-empty'
       } else if (prev > 0 && v <= prev) {
         // 只有「本层 ≤ 上层」时转化率才有业务含义；
         // 本层反超上层说明有候选人跳过了该环节（如免初筛直接 AI 面试），
@@ -474,6 +790,13 @@
         const stepRate = v / prev
         rateText = fmtPct(stepRate, 0)
         cls = stepRate >= 0.7 ? 'hot' : (stepRate < 0.4 ? 'cold' : '')
+      } else if (prev === 0 && v > 0) {
+        // 上层是 0、本层有人：确实有人绕过该环节，「跳过」比「—」诚实
+        rateText = '跳过'
+        cls = 'is-skip'
+      } else {
+        // 上层为 0 且本层也为 0，或本层反超上层：都不构成可计算的转化率
+        cls = 'is-empty'
       }
       return `<div class="fr">
         <span class="idx">${String(i + 1).padStart(2, '0')}</span>
@@ -485,6 +808,8 @@
     }).join('')
 
     $('overallRate').textContent = first ? ((f.onboarded / first) * 100).toFixed(1) : '—'
+    // 7 天窗口天生拉不到入职，给出可比口径提示，避免被读成「招聘崩了」
+    $('cohortNotice').hidden = state.days !== 7
   }
 
   // ── 趋势 ────────────────────────────────
@@ -492,26 +817,35 @@
     const t = d.trend
     const axis = t.axis.map((s) => s.slice(5).replace('-', '/'))
     emptyCheck('wrapTrend', !t.axis.length)
+    // 「全部」口径下趋势轴固定铺 30 天（后端 span 上限），文案必须跟着说实话
+    $('trendHint').textContent = state.days === 0 ? '趋势仅展示最近 30 天' : '按事件发生日统计'
     const inst = chart('chTrend')
     if (!inst) return
+    if (!axis.length) { inst.clear(); return }
+    const yName = (text, extra) => Object.assign({}, VALUE_AXIS, {
+      name: text, nameTextStyle: { color: '#7f8dab', fontSize: FS },
+    }, extra)
     inst.setOption({
       tooltip: Object.assign({ trigger: 'axis', axisPointer: { type: 'line', lineStyle: { color: 'rgba(120,150,200,.3)' } } }, TOOLTIP),
-      legend: Object.assign({ top: 0, right: 0, data: ['候选人建档', 'AI 面试完成', '发出 Offer', '入职'] }, LEGEND),
-      grid: { left: 42, right: 42, top: 36, bottom: 26 },
+      // 图例居中：左右两端要留给双 Y 轴的轴名（建档 / 完成），右对齐会压住「完成」
+      legend: Object.assign({ top: 0, left: 'center', data: ['候选人建档', 'AI 面试完成', '发出 Offer', '入职'] }, LEGEND),
+      grid: GRID_V_DUAL(),
       xAxis: {
         type: 'category', data: axis, boundaryGap: true,
-        axisLine: AXIS_LINE, axisLabel: Object.assign({}, AXIS_LABEL, { interval: axis.length > 20 ? 2 : 0 }),
+        // 90 天档标签很密：交给 ECharts 自动抽稀并隐藏重叠，别再手写 interval 推算
+        axisLine: AXIS_LINE,
+        axisLabel: Object.assign({}, AXIS_LABEL, { interval: 'auto', hideOverlap: true }),
         axisTick: { show: false },
       },
       yAxis: [
-        { type: 'value', name: '建档', nameTextStyle: { color: '#5b6884', fontSize: 10 }, axisLine: { show: false }, axisTick: { show: false }, axisLabel: AXIS_LABEL, splitLine: SPLIT_LINE, minInterval: 1 },
-        { type: 'value', name: '完成', nameTextStyle: { color: '#5b6884', fontSize: 10 }, axisLine: { show: false }, axisTick: { show: false }, axisLabel: AXIS_LABEL, splitLine: { show: false }, minInterval: 1 },
+        yName('建档'),
+        yName('完成', { splitLine: { show: false } }),
       ],
       series: [
         {
-          name: '候选人建档', type: 'bar', barMaxWidth: 18, z: 1,
+          name: '候选人建档', type: 'bar', barMaxWidth: g(18), z: 1,
           itemStyle: {
-            borderRadius: [4, 4, 0, 0],
+            borderRadius: BAR_R_V(),
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
               { offset: 0, color: 'rgba(79,140,255,.95)' },
               { offset: 1, color: 'rgba(79,140,255,.12)' },
@@ -519,9 +853,9 @@
           },
           data: t.series.created,
         },
-        { name: 'AI 面试完成', type: 'line', yAxisIndex: 1, smooth: true, symbol: 'circle', symbolSize: 5, z: 3, itemStyle: { color: C.cyan }, lineStyle: { width: 2, color: C.cyan }, areaStyle: { color: 'rgba(34,211,238,.07)' }, data: t.series.ai_done },
-        { name: '发出 Offer', type: 'line', yAxisIndex: 1, smooth: true, symbol: 'circle', symbolSize: 5, z: 3, itemStyle: { color: C.amber }, lineStyle: { width: 2, color: C.amber }, data: t.series.offer_sent },
-        { name: '入职', type: 'line', yAxisIndex: 1, smooth: true, symbol: 'circle', symbolSize: 5, z: 3, itemStyle: { color: C.green }, lineStyle: { width: 2, color: C.green }, data: t.series.onboarded },
+        { name: 'AI 面试完成', type: 'line', yAxisIndex: 1, smooth: true, symbol: 'circle', symbolSize: g(5), z: 3, itemStyle: { color: C.cyan }, lineStyle: { width: g(2), color: C.cyan }, areaStyle: { color: 'rgba(34,211,238,.07)' }, data: t.series.ai_done },
+        { name: '发出 Offer', type: 'line', yAxisIndex: 1, smooth: true, symbol: 'circle', symbolSize: g(5), z: 3, itemStyle: { color: C.amber }, lineStyle: { width: g(2), color: C.amber }, data: t.series.offer_sent },
+        { name: '入职', type: 'line', yAxisIndex: 1, smooth: true, symbol: 'circle', symbolSize: g(5), z: 3, itemStyle: { color: C.green }, lineStyle: { width: g(2), color: C.green }, data: t.series.onboarded },
       ],
     }, true)
   }
@@ -543,25 +877,20 @@
             + `平均最终分 ${r.avg_final == null ? '—' : r.avg_final.toFixed(1)}`
         },
       }, TOOLTIP),
-      grid: { left: 4, right: 46, top: 8, bottom: 6, containLabel: true },
-      xAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false }, axisLabel: AXIS_LABEL, splitLine: SPLIT_LINE, minInterval: 1 },
-      yAxis: {
-        type: 'category',
-        data: rows.map((r) => cleanJob(r.title)),
-        axisLine: { show: false }, axisTick: { show: false },
-        axisLabel: { color: '#a9b7d0', fontSize: 11, width: 128, overflow: 'break', lineHeight: 14, interval: 0 },
-      },
+      grid: GRID_H(),
+      xAxis: VALUE_AXIS,
+      yAxis: catAxis(rows.map((r) => cleanJob(r.title)), { width: g(128), overflow: 'break', lineHeight: g(14), interval: 0 }),
       series: [
         {
-          name: '候选人', type: 'bar', barWidth: 13, z: 1,
-          itemStyle: { borderRadius: [0, 4, 4, 0], color: 'rgba(79,140,255,.42)' },
-          label: { show: true, position: 'right', color: '#8b9bb4', fontSize: 11, formatter: (p) => `${p.value}` },
+          name: '候选人', type: 'bar', barWidth: g(13), z: 1,
+          itemStyle: { borderRadius: BAR_R_H(), color: 'rgba(79,140,255,.42)' },
+          label: { show: true, position: 'right', color: '#8b9bb4', fontSize: FS, formatter: (p) => `${p.value}` },
           data: rows.map((r) => r.candidates),
         },
         {
           // 已入职叠加成「进度条」：绿色长度 = 入职人数，一眼看出各岗位转化深浅
-          name: '已入职', type: 'bar', barWidth: 13, barGap: '-100%', z: 2,
-          itemStyle: { borderRadius: [0, 4, 4, 0], color: 'rgba(52,211,153,.9)' },
+          name: '已入职', type: 'bar', barWidth: g(13), barGap: '-100%', z: 2,
+          itemStyle: { borderRadius: BAR_R_H(), color: 'rgba(52,211,153,.9)' },
           data: rows.map((r) => r.onboarded),
         },
       ],
@@ -587,23 +916,19 @@
             + `完成 AI ${r.ai_done} · Offer ${r.offer_sent} · 入职 <b>${r.onboarded}</b>`
         },
       }, TOOLTIP),
-      grid: { left: 2, right: 78, top: 6, bottom: 4, containLabel: true },
-      xAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false }, axisLabel: AXIS_LABEL, splitLine: SPLIT_LINE, minInterval: 1 },
-      yAxis: {
-        type: 'category', data: rows.map((r) => r.name),
-        axisLine: { show: false }, axisTick: { show: false },
-        axisLabel: { color: '#a9b7d0', fontSize: 11, width: 76, overflow: 'break', lineHeight: 13, interval: 0 },
-      },
+      grid: GRID_H_WIDE(),
+      xAxis: VALUE_AXIS,
+      yAxis: catAxis(rows.map((r) => r.name), { width: g(76), overflow: 'break', lineHeight: g(13), interval: 0 }),
       series: [{
-        type: 'bar', barWidth: 13,
+        type: 'bar', barWidth: g(13),
         itemStyle: {
-          borderRadius: [0, 4, 4, 0],
+          borderRadius: BAR_R_H(),
           color: (p) => (rows[p.dataIndex].name === '未填写' ? 'rgba(90,106,136,.55)' : 'rgba(34,211,238,.85)'),
         },
         label: {
-          show: true, position: 'right', fontSize: 10.5,
+          show: true, position: 'right', fontSize: FS_MAP.sm,
           formatter: (p) => `{a|${p.value}}{b|  ${total ? ((p.value / total) * 100).toFixed(0) : 0}%}`,
-          rich: { a: { color: '#c2cde4', fontSize: 11.5, fontWeight: 600 }, b: { color: '#5b6884', fontSize: 10 } },
+          rich: { a: { color: '#c2cde4', fontSize: FS_MAP.md, fontWeight: 600 }, b: { color: '#7f8dab', fontSize: FS_MAP.sm } },
         },
         data: rows.map((r) => r.candidates),
       }],
@@ -617,21 +942,24 @@
     emptyCheck('wrapScore', !total)
     const avgEl = $('scoreAvg')
     if (avgEl) {
-      avgEl.textContent = `均分 ${fmtScore(s.avg.screen)} / ${fmtScore(s.avg.ai)} / ${fmtScore(s.avg.offline)} / ${fmtScore(s.avg.final)}（初筛 / AI / 复试 / 最终）`
+      // 均分单独成条：比塞进 hint 里更易读，也让「各环节」有了横向对比的锚点
+      avgEl.innerHTML = [['初筛', s.avg.screen], ['AI 面试', s.avg.ai], ['线下复试', s.avg.offline], ['最终', s.avg.final]]
+        .map(([k, v]) => `<span class="avg-item"><b>${fmtScore(v)}</b><i>${k}</i></span>`).join('')
     }
     const inst = chart('chScore')
     if (!inst) return
+    if (!total) { inst.clear(); return }
     const mk = (name, data, color) => ({
-      name, type: 'bar', barMaxWidth: 13, barGap: '18%',
-      itemStyle: { color, borderRadius: [3, 3, 0, 0] },
+      name, type: 'bar', barMaxWidth: g(13), barGap: '18%',
+      itemStyle: { color, borderRadius: BAR_R_V() },
       data,
     })
     inst.setOption({
       tooltip: Object.assign({ trigger: 'axis', axisPointer: { type: 'shadow' } }, TOOLTIP),
       legend: Object.assign({ top: 0, right: 0, data: ['简历初筛', 'AI 面试', '线下复试', '最终得分'] }, LEGEND),
-      grid: { left: 34, right: 10, top: 34, bottom: 24 },
+      grid: GRID_V(),
       xAxis: { type: 'category', data: s.buckets, axisLine: AXIS_LINE, axisTick: { show: false }, axisLabel: AXIS_LABEL },
-      yAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false }, axisLabel: AXIS_LABEL, splitLine: SPLIT_LINE, minInterval: 1 },
+      yAxis: VALUE_AXIS,
       series: [
         mk('简历初筛', s.series.screen, 'rgba(79,140,255,.88)'),
         mk('AI 面试', s.series.ai, 'rgba(34,211,238,.88)'),
@@ -656,16 +984,12 @@
     const total = rows.reduce((s, r) => s + r.value, 0)
     inst.setOption({
       tooltip: Object.assign({ trigger: 'item', formatter: (p) => `${p.name}<br/>${p.value} 份 · ${p.percent}%` }, TOOLTIP),
-      title: {
-        text: String(total), subtext: '份 Offer', left: 'center', top: '39%',
-        textStyle: { color: '#e8eefc', fontSize: 24, fontWeight: 650 },
-        subtextStyle: { color: '#5b6884', fontSize: 11 },
-      },
+      title: donutCenter(total, '份 Offer', DONUT_FS),
       series: [{
         type: 'pie', radius: ['56%', '76%'], center: ['50%', '50%'],
-        itemStyle: { borderColor: '#0b1120', borderWidth: 2, borderRadius: 3 },
-        label: { color: '#b8c4dc', fontSize: 11, formatter: '{b}\n{c}', lineHeight: 15 },
-        labelLine: { length: 7, length2: 9, lineStyle: { color: '#33415c' } },
+        itemStyle: { borderColor: '#0e1424', borderWidth: 2, borderRadius: 3 },
+        label: { color: '#b8c4dc', fontSize: FS_MAP.sm, formatter: '{b}\n{c}', lineHeight: g(15) },
+        labelLine: { length: g(7), length2: g(9), lineStyle: { color: '#33415c' } },
         labelLayout: { hideOverlap: true },
         data: rows.map((r) => ({ name: r.name, value: r.value, itemStyle: { color: colorMap[r.key] || C.grey } })),
       }],
@@ -684,15 +1008,16 @@
     inst.setOption({
       tooltip: Object.assign({ trigger: 'item', formatter: (p) => `${p.name}<br/>${p.value} 人 · ${p.percent}%` }, TOOLTIP),
       legend: Object.assign({ bottom: 0, left: 'center' }, LEGEND),
-      title: {
-        text: String(total), subtext: '人', left: 'center', top: '32%',
-        textStyle: { color: '#e8eefc', fontSize: 22, fontWeight: 650 },
-        subtextStyle: { color: '#5b6884', fontSize: 10.5 },
-      },
+      title: donutCenter(total, '人', DONUT_FS_SM, '34%'),
       series: [{
-        type: 'pie', radius: ['48%', '70%'], center: ['50%', '46%'], minAngle: 5,
-        itemStyle: { borderColor: '#0b1120', borderWidth: 2, borderRadius: 3 },
-        label: { show: false },
+        type: 'pie', radius: ['46%', '66%'], center: ['50%', '44%'], minAngle: 5,
+        // 环本来就细，标签放环外并允许隐藏重叠，比塞进环内可读
+        avoidLabelOverlap: true,
+        itemStyle: { borderColor: '#0e1424', borderWidth: 2, borderRadius: 3 },
+        label: {
+          show: true, position: 'outside', color: '#b8c4dc', fontSize: FS_MAP.sm, formatter: '{b} {c}',
+        },
+        labelLine: { show: true, length: g(4), length2: g(5), lineStyle: { color: '#33415c' } },
         labelLayout: { hideOverlap: true },
         data: rows.map((r) => ({ name: r.name, value: r.value, itemStyle: { color: cm[r.name] || C.grey } })),
       }],
@@ -708,17 +1033,13 @@
     if (!rows.length) { inst.clear(); return }
     inst.setOption({
       tooltip: Object.assign({ trigger: 'axis', axisPointer: { type: 'shadow' } }, TOOLTIP),
-      grid: { left: 2, right: 44, top: 6, bottom: 4, containLabel: true },
-      xAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false }, axisLabel: AXIS_LABEL, splitLine: SPLIT_LINE, minInterval: 1 },
-      yAxis: {
-        type: 'category', data: rows.map((r) => clamp(r.name, 8)),
-        axisLine: { show: false }, axisTick: { show: false },
-        axisLabel: { color: '#a9b7d0', fontSize: 11 },
-      },
+      grid: GRID_H(),
+      xAxis: VALUE_AXIS,
+      yAxis: catAxis(rows.map((r) => clamp(r.name, 8))),
       series: [{
-        type: 'bar', barMaxWidth: 13,
-        itemStyle: { borderRadius: [0, 4, 4, 0], color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: 'rgba(167,139,250,.35)' }, { offset: 1, color: 'rgba(167,139,250,.92)' }]) },
-        label: { show: true, position: 'right', color: '#7f8dab', fontSize: 10.5, formatter: (p) => `${rows[p.dataIndex].sessions} 场` },
+        type: 'bar', barMaxWidth: g(13),
+        itemStyle: { borderRadius: BAR_R_H(), color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: 'rgba(167,139,250,.35)' }, { offset: 1, color: 'rgba(167,139,250,.92)' }]) },
+        label: { show: true, position: 'right', color: '#7f8dab', fontSize: FS, formatter: (p) => `${rows[p.dataIndex].sessions} 场` },
         data: rows.map((r) => r.sessions),
       }],
     }, true)
@@ -736,17 +1057,13 @@
         trigger: 'axis', axisPointer: { type: 'shadow' },
         formatter: (ps) => { const r = rows[rows.length - 1 - ps[0].dataIndex]; return `<b>${r.name}</b><br/>Offer ${r.offers} · 接受 ${r.accepted} · 入职 ${r.onboarded}` },
       }, TOOLTIP),
-      grid: { left: 2, right: 36, top: 6, bottom: 4, containLabel: true },
-      xAxis: { type: 'value', axisLine: { show: false }, axisTick: { show: false }, axisLabel: AXIS_LABEL, splitLine: SPLIT_LINE, minInterval: 1 },
-      yAxis: {
-        type: 'category', data: rows.map((r) => r.name),
-        axisLine: { show: false }, axisTick: { show: false },
-        axisLabel: { color: '#a9b7d0', fontSize: 11, width: 104, overflow: 'break', lineHeight: 14, interval: 0 },
-      },
+      grid: GRID_H(),
+      xAxis: VALUE_AXIS,
+      yAxis: catAxis(rows.map((r) => r.name), { width: g(104), overflow: 'break', lineHeight: g(14), interval: 0 }),
       series: [{
-        type: 'bar', barWidth: 12,
-        itemStyle: { borderRadius: [0, 4, 4, 0], color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: 'rgba(52,211,153,.3)' }, { offset: 1, color: 'rgba(52,211,153,.9)' }]) },
-        label: { show: true, position: 'right', color: '#8b9bb4', fontSize: 10.5, formatter: (p) => `${rows[p.dataIndex].offers}` },
+        type: 'bar', barWidth: g(12),
+        itemStyle: { borderRadius: BAR_R_H(), color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [{ offset: 0, color: 'rgba(52,211,153,.3)' }, { offset: 1, color: 'rgba(52,211,153,.9)' }]) },
+        label: { show: true, position: 'right', color: '#8b9bb4', fontSize: FS, formatter: (p) => `${rows[p.dataIndex].offers}` },
         data: rows.map((r) => r.offers),
       }],
     }, true)
@@ -754,16 +1071,41 @@
 
   // ── 明细表 ──────────────────────────────
   function renderRecent(d) {
-    const rows = d.recent || []
+    state.recentRows = d.recent || []
+    renderRecentTable()
+  }
+
+  // 搜索/排序只重渲染 tbody，不动其它面板
+  function renderRecentTable() {
     const body = $('recentBody')
+    if (!body) return
+    const q = state.query.trim().toLowerCase()
+    let rows = state.recentRows
+    if (q) {
+      rows = rows.filter((r) => `${r.candidate_name || ''} ${r.job_title || ''}`.toLowerCase().includes(q))
+    }
+    if (state.sortKey) {
+      const sign = state.sortDesc ? -1 : 1
+      rows = rows.slice().sort((a, b) => {
+        // 缺值统一排到末位（降序时 -Infinity / 空串自然沉底）
+        const pick = (r) => (state.sortKey === 'final'
+          ? (r.final_score == null ? -Infinity : Number(r.final_score))
+          : String(r.snapshot_at || ''))
+        const va = pick(a)
+        const vb = pick(b)
+        const cmp = va < vb ? -1 : (va > vb ? 1 : 0)
+        return cmp * sign
+      })
+    }
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="9" style="color:#48536e;padding:26px;text-align:center">当前口径下暂无汇总记录</td></tr>'
+      body.innerHTML = `<tr><td colspan="9"><div class="state">${q
+        ? '没有匹配的候选人<small>换个姓名或岗位关键词试试</small>'
+        : '当前口径下暂无汇总记录<small>试试切换到 90 天或「全部」</small>'}</div></td></tr>`
       return
     }
+    const sc = (v) => (v == null ? '<span class="na">—</span>' : fmtScore(v))
     body.innerHTML = rows.map((r) => {
       const vc = VERDICT_CLASS[r.verdict] || 'n'
-      const st = STAGE_LABEL[r.stage] || r.stage || '—'
-      const sc = (v) => (v == null ? '<span style="color:#3f4a63">—</span>' : fmtScore(v))
       return `<tr>
         <td class="name">${r.candidate_name || '—'}</td>
         <td class="job" title="${r.job_title || ''}">${r.job_title || '—'}</td>
@@ -771,9 +1113,9 @@
         <td class="num">${sc(r.ai_score)}</td>
         <td class="num">${sc(r.offline_score)}</td>
         <td class="num" style="color:#e3ebfa;font-weight:600">${sc(r.final_score)}</td>
-        <td>${r.verdict ? `<span class="tag ${vc}">${r.verdict}</span>` : '<span style="color:#3f4a63">—</span>'}</td>
-        <td><span class="tag n">${st}</span></td>
-        <td style="color:#5b6884;font-size:11.5px">${r.snapshot_at || '—'}</td>
+        <td>${r.verdict ? `<span class="tag ${vc}">${r.verdict}</span>` : '<span class="na">—</span>'}</td>
+        <td><span class="tag n">${STAGE_LABEL[r.stage] || '其他状态'}</span></td>
+        <td class="ts">${r.snapshot_at || '—'}</td>
       </tr>`
     }).join('')
   }
@@ -783,7 +1125,7 @@
     const rows = d.activity || []
     const feed = $('feed')
     if (!rows.length) {
-      feed.innerHTML = '<div style="color:#48536e;padding:26px;text-align:center;font-size:12.5px">暂无动态</div>'
+      feed.innerHTML = '<div class="state">暂无动态<small>当前口径下还没有建档 / 面试 / Offer 记录</small></div>'
       return
     }
     feed.innerHTML = rows.map((r) => `
@@ -801,9 +1143,12 @@
   }
 
   // ── 渲染主流程 ──────────────────────────
-  function render(d) {
-    renderKPI(d)
-    renderFunnel(d)
+  // 图表部分单独成函数：跨档切换时可以用同一份数据重画，不必再打一次接口
+  function renderCharts(d) {
+    if (!d) return
+    // 先把当前档位的字号读进来，下面所有图表的 fontSize/几何才是一致的
+    applyChartFontScale()
+
     renderTrend(d)
     renderJobs(d)
     renderChannel(d)
@@ -812,13 +1157,50 @@
     renderVerdict(d)
     renderInterviewer(d)
     renderStore(d)
+  }
+
+  function render(d) {
+    state.lastPayload = d
+    renderKPI(d)
+    renderFunnel(d)
+    renderCharts(d)
     renderRecent(d)
     renderFeed(d)
 
-    $('updatedAt').textContent = d.generated_at.slice(11)
+    state.lastSuccess = new Date()
+    $('updatedAt').textContent = `数据生成 ${d.generated_at.slice(5)}`
+    const fetchedEl = $('fetchedAt')
+    if (fetchedEl) fetchedEl.textContent = `上次刷新 ${state.lastSuccess.toTimeString().slice(0, 8)}`
     $('footerMeta').innerHTML = `<b>当前口径</b> ${d.meta.window_label} · ${d.meta.scope_label}${d.meta.window_start ? ` · 起点 ${d.meta.window_start}` : ''}`
     state.countdown = 60
+    // 成功后清零失败计数、记下成功时刻供失败时引用，并收起故障态
+    state.failCount = 0
+    clearAuthBlocked()
+
+    // 「命中缓存」只在真的复用了上次结果时出现：
+    // 首次加载没有 prevGeneratedAt，绝不会误报「命中缓存」
+    const cached = state.prevGeneratedAt != null && state.prevGeneratedAt === d.generated_at
+    state.prevGeneratedAt = d.generated_at
+    const cacheEl = $('cacheHint')
+    if (cacheEl) cacheEl.hidden = !cached
+
+    setStamp('ok')
     requestAnimationFrame(() => state.charts.forEach((c) => c.resize()))
+  }
+
+  // 失败时不再让界面假装「刚更新过」：把时间戳换成过期说明 + 退避重试
+  function markStale(msg) {
+    state.failCount += 1
+    // 退避：30s × 连续失败次数，封顶 300s，避免后端故障时把请求打成风暴
+    state.countdown = Math.min(300, 30 * state.failCount)
+    setStamp('stale')
+    const upd = $('updatedAt')
+    if (upd) {
+      upd.textContent = state.lastSuccess
+        ? `数据已过期 · 上次成功 ${state.lastSuccess.toTimeString().slice(0, 8)}`
+        : '连接失败'
+    }
+    showError(msg)
   }
 
   // ── 加载 ────────────────────────────────
@@ -829,16 +1211,32 @@
     const bar = $('progress')
     bar.classList.add('on')
     bar.style.width = '38%'
+    setStamp('loading')
     try {
       const url = `/api/dashboard?days=${state.days}&scope=${state.scope}`
       const res = await fetch(url, { headers: { Accept: 'application/json' } })
       bar.style.width = '76%'
-      const json = await res.json()
+      // 401 可能是 JSON，也可能是网关吐的 HTML 错误页，两条路径都要能识别
+      if (res.status === 401) {
+        onAuthBlocked()
+        bar.style.width = '100%'
+        return
+      }
+      if (!res.ok) throw new Error(`接口返回 ${res.status}`)
+      // res.json() 单独兜一层：网关错误页、被截断的响应都不该冒泡成未捕获异常
+      let json = null
+      try { json = await res.json() } catch (_) { json = null }
+      if (!json) throw new Error('响应不是有效 JSON')
+      if (json.code === 401) {
+        onAuthBlocked()
+        bar.style.width = '100%'
+        return
+      }
       if (json.code !== 0) throw new Error(json.message || '未知错误')
       render(json.data)
       bar.style.width = '100%'
     } catch (e) {
-      showError(e.message || e)
+      markStale(e && e.message ? e.message : e)
       bar.style.width = '100%'
     } finally {
       setTimeout(() => { bar.classList.remove('on'); bar.style.width = '0' }, 380)
@@ -846,12 +1244,79 @@
     }
   }
 
+  // ── 指示灯 / 故障态 ──────────────────────
+  // 只有一条刷新路径（60 秒轮询），所以指示灯只需表达三件事：
+  // 正在加载 / 正常（附倒计时）/ 数据已过期（附重试倒计时）。
+  function setStamp(mode) {
+    const stamp = $('stamp')
+    if (stamp) {
+      stamp.classList.toggle('loading', mode === 'loading')
+      stamp.classList.toggle('stale', mode === 'stale')
+    }
+    const hint = $('refreshIn')
+    if (!hint) return
+    if (mode === 'loading') hint.textContent = '刷新中'
+    else if (mode === 'stale') hint.textContent = `${state.countdown}s 后重试`
+    else hint.textContent = `${state.countdown}s`
+  }
+
+  const hhmm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+
+  // 口令失效不是网络抖动：重试也过不去，所以给全屏说明 + 长退避，不做重试按钮
+  function onAuthBlocked() {
+    state.failCount = 0
+    state.countdown = 300
+    if (!state.authBlockedAt) state.authBlockedAt = new Date()
+    const since = $('fsSince')
+    if (since) since.textContent = `故障始于 ${hhmm(state.authBlockedAt)}`
+    const el = $('fullscreenState')
+    if (el) el.hidden = false
+    const notice = $('authNotice')
+    if (notice) notice.hidden = false
+    document.title = '访问受限 · 招聘数据看板'
+    setStamp('stale')
+  }
+
+  function clearAuthBlocked() {
+    state.authBlockedAt = null
+    const el = $('fullscreenState')
+    if (el) el.hidden = true
+    const notice = $('authNotice')
+    if (notice) notice.hidden = true
+    document.title = '招聘数据看板 · 笨二娘隆江猪脚饭'
+  }
+
   // ── 交互 ────────────────────────────────
+  // 明细表：搜索（姓名/岗位）+ 排序（最终分/时间，点第二次反向）
+  $('tableSearch').addEventListener('input', (e) => {
+    state.query = e.target.value || ''
+    renderRecentTable()
+  })
+
+  document.querySelectorAll('.sort-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.sort
+      if (state.sortKey === key) {
+        state.sortDesc = !state.sortDesc
+      } else {
+        state.sortKey = key
+        state.sortDesc = true
+      }
+      document.querySelectorAll('.sort-btn').forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.sort === state.sortKey))
+      })
+      renderRecentTable()
+    })
+  })
+
   $('daysSeg').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-days]')
     if (!btn) return
-    $('daysSeg').querySelectorAll('button').forEach((b) => b.classList.remove('on'))
-    btn.classList.add('on')
+    $('daysSeg').querySelectorAll('button').forEach((b) => {
+      const on = b === btn
+      b.classList.toggle('on', on)
+      b.setAttribute('aria-pressed', String(on))
+    })
     state.days = Number(btn.dataset.days)
     syncUrl()
     load()
@@ -860,20 +1325,29 @@
   $('scopeSeg').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-scope]')
     if (!btn) return
-    $('scopeSeg').querySelectorAll('button').forEach((b) => b.classList.remove('on'))
-    btn.classList.add('on')
+    $('scopeSeg').querySelectorAll('button').forEach((b) => {
+      const on = b === btn
+      b.classList.toggle('on', on)
+      b.setAttribute('aria-pressed', String(on))
+    })
     state.scope = btn.dataset.scope
     syncUrl()
+    syncScopeBadge()
     load()
   })
 
   $('refreshBtn').addEventListener('click', () => load())
 
-  // 自动刷新：每 60 秒；页面不可见时暂停，回到前台立刻补一次
+  // 自动刷新：单一路径——每 60 秒轮询；失败后按 30s×失败次数退避（封顶 300s），
+  // 401 直接排到 300s 后再试，避免对着一个已知无效的口令反复敲门。
   setInterval(() => {
     if (document.hidden) return
-    state.countdown -= 1
-    if (state.countdown <= 0) load()
+    state.countdown = Math.max(0, state.countdown - 1)
+    const hint = $('refreshIn')
+    if (hint) hint.textContent = state.failCount > 0 || state.authBlockedAt
+      ? `${state.countdown}s 后重试`
+      : `${state.countdown}s`
+    if (state.countdown === 0) load()
   }, 1000)
 
   document.addEventListener('visibilitychange', () => {
@@ -884,6 +1358,14 @@
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer)
     resizeTimer = setTimeout(() => state.charts.forEach((c) => c.resize()), 160)
+  })
+
+  // 档位变化（窗口被拖到另一块屏 / 跨过 1800·2500 断点）：用已经拿到的数据重画，
+  // 不再打一次接口——拖窗口跨断点会连续触发，重取数据等于自造请求风暴。
+  // 首屏数据还没到时 lastPayload 仍是 null，renderCharts 内部直接返回。
+  window.addEventListener('bi-tier-change', () => {
+    state.charts.forEach((c) => c.resize())
+    renderCharts(state.lastPayload)
   })
 
   applyUrlParams()
