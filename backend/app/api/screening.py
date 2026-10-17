@@ -28,7 +28,7 @@ from app.exceptions import BizError
 from app.services.cascade import candidate_is_orphan, purge_candidate
 from app.services.company_profile import snapshot_company_profile
 from app.services.feishu_notify import notify_interview_created, notify_screening_recommendations
-from app.services.resume_parser import parse_resume
+from app.services.resume_parser import extract_candidate_name, parse_resume
 from app.services.resume_screening import recommendation_from_score, screen_resume
 
 logger = logging.getLogger(__name__)
@@ -45,20 +45,6 @@ def _parse_uuid(value: str, label: str) -> uuid.UUID:
         return uuid.UUID(value)
     except (ValueError, TypeError, AttributeError):
         raise BizError(422, f"{label}格式无效", http_status=422)
-
-
-def _name_from_filename(filename: str) -> str:
-    """从简历文件名推断候选人姓名（去掉扩展名与常见分隔后缀）。"""
-    stem = (filename or "").rsplit("/", 1)[-1]
-    stem = re.sub(r"\.[A-Za-z0-9]{1,6}$", "", stem).strip()
-    # 常见命名：姓名-岗位 / 姓名_岗位 / 姓名 简历 —— 取第一个分隔符前的片段
-    for sep in ("-", "_", "—"):
-        if sep in stem:
-            head = stem.split(sep, 1)[0].strip()
-            if head:
-                stem = head
-                break
-    return stem or "未命名候选人"
 
 
 def _extract_contacts(text: str) -> tuple[str | None, str | None]:
@@ -151,7 +137,7 @@ async def upload_and_screen(
                 raise ValueError("文件内容为空")
 
             parsed_text = parse_resume(content, filename)
-            name = _name_from_filename(filename)
+            name = extract_candidate_name(parsed_text, filename)
             phone, email = _extract_contacts(parsed_text)
 
             candidate = Candidate(name=name, email=email, phone=phone)
