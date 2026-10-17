@@ -318,6 +318,42 @@
   .feed-sub{font-size:var(--fs-1);color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .feed-ts{font-size:var(--fs-1);color:var(--dim);margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
 
+  /* ── 账号活跃度（最后登录 / 绩效参考）────────── */
+  .team{display:flex;flex-wrap:wrap;gap:11px}
+  .team-card{
+    position:relative;overflow:hidden;padding:12px 14px 11px;border-radius:12px;
+    background:rgba(255,255,255,.022);border:1px solid var(--border);
+    border-left:2px solid var(--status-color,var(--blue));
+    flex:1 1 250px;min-width:0;
+    /* 卡片会被 flex 拉宽，内部走两栏，避免内容全挤在左边 */
+    display:grid;grid-template-columns:1fr auto;align-items:end;column-gap:14px;
+  }
+  .team-top,.team-role{grid-column:1 / -1}
+  .team-card.status-active{--status-color:var(--green)}
+  .team-card.status-idle{--status-color:var(--amber)}
+  .team-card.status-inactive{--status-color:var(--red)}
+  .team-card.status-never{--status-color:#4a5570}
+  .team-card.is-off{opacity:.55}
+  .team-top{display:flex;align-items:center;gap:8px}
+  .team-name{font-size:var(--fs-3);font-weight:600;color:#e3ebfa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .team-badge{margin-left:auto;flex:none;font-size:var(--fs-1);line-height:1.7;padding:0 8px;border-radius:9999px}
+  .team-badge.g{background:rgba(52,211,153,.15);color:#6ee7b7}
+  .team-badge.y{background:rgba(251,191,36,.15);color:#fcd34d}
+  .team-badge.r{background:rgba(248,113,113,.15);color:#fca5a5}
+  .team-badge.n{background:rgba(148,163,184,.13);color:#a9b7d0}
+  .team-role{font-size:var(--fs-1);color:var(--dim);margin-top:3px}
+  .team-last{margin-top:10px;display:flex;flex-direction:column;gap:1px}
+  .team-last-l{font-size:var(--fs-1);color:var(--dim)}
+  .team-last-v{font-size:var(--fs-5);font-weight:650;line-height:1.18;color:#e8eefc;font-variant-numeric:tabular-nums}
+  .team-last-d{font-size:var(--fs-1);color:#5b6884;font-variant-numeric:tabular-nums}
+  .team-meta{margin-top:10px;display:flex;flex-direction:column;align-items:flex-end;
+    gap:3px;font-size:var(--fs-1);color:var(--dim);text-align:right;white-space:nowrap}
+  .team-meta b{color:#c2cde4;font-weight:600;font-variant-numeric:tabular-nums}
+  /* 近 N 天登录热力条：一格一天，亮 = 当天登录过 */
+  .team-heat{grid-column:1 / -1;display:flex;gap:2px;margin-top:10px}
+  .heat-cell{flex:1;height:7px;border-radius:2px;background:rgba(255,255,255,.06);transition:background .2s}
+  .heat-cell.on{background:var(--status-color,var(--green));opacity:.92}
+
   footer{
     margin-top:16px;padding-top:12px;border-top:1px solid var(--border-soft);
     display:flex;gap:18px;flex-wrap:wrap;font-size:var(--fs-1);color:var(--dim);line-height:1.9;
@@ -529,6 +565,11 @@
       <div class="chart-wrap" id="wrapStore"><div class="chart h210" id="chStore"></div></div>
     </section>
 
+    <section class="panel span-12" style="--rule-accent:var(--cyan)" aria-label="账号活跃度">
+      <h2>HR / 账号活跃度<span class="hint" id="teamHint">最后登录 · 绩效参考</span></h2>
+      <div class="team" id="team"></div>
+    </section>
+
     <section class="panel span-8 full-lg" style="--rule-accent:var(--blue)" aria-label="候选人汇总明细">
       <h2>候选人汇总明细<span class="hint">最近 25 条 · 按汇总时间</span></h2>
       <div class="table-tools">
@@ -652,6 +693,7 @@
   // ── 状态 ────────────────────────────────
   const state = {
     days: 30, scope: 'all', timer: null, countdown: 60, charts: [],
+    live: false,           // SSE 实时通道是否在线；在线时靠推送刷新，不走倒计时轮询
     failCount: 0,          // 连续失败次数：决定退避间隔，成功后清零
     lastSuccess: null,     // 最近一次成功渲染的时间（Date），用于「数据已过期」文案
     lastPayload: null,     // 最近一次成功的完整 payload，供档位切换时本地重绘图表
@@ -1142,6 +1184,82 @@
       </div>`).join('')
   }
 
+  // ── 账号活跃度（最后登录 / 绩效参考）──────
+  const TEAM_STATUS = {
+    active: ['活跃', 'g'],
+    idle: ['一般', 'y'],
+    inactive: ['沉睡', 'r'],
+    never: ['未登录', 'n'],
+  }
+  const esc = (s) => String(s == null ? '' : s).replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]),
+  )
+
+  // 大字给「距今多久」（最能反映活跃度），小字给确切日期（绩效评定按日期取）
+  function lastLoginText(t) {
+    if (!t.last_login_at) return { main: '从未登录', sub: '无登录记录' }
+    const d = t.days_since_login
+    let main
+    if (d == null) main = t.last_login_date
+    else if (d < 1) main = `今天 ${t.last_login_time}`
+    else if (d < 2) main = `昨天 ${t.last_login_time}`
+    else if (d < 31) main = `${Math.floor(d)} 天前`
+    else main = `${Math.floor(d / 30)} 个月前`
+    return { main, sub: `${t.last_login_date} ${t.last_login_time}` }
+  }
+
+  function renderTeam(d) {
+    const box = $('team')
+    if (!box) return
+    const rows = d.team || []
+    const sum = d.team_summary || {}
+    // 热力条直接复用趋势图那条日期轴，保证和页面其它地方「近 N 天」一致
+    const axis = (d.trend && d.trend.axis) || []
+
+    const hint = $('teamHint')
+    if (hint) {
+      const parts = [`${sum.total || 0} 个账号`]
+      if (sum.active) parts.push(`${sum.active} 个 7 天内登录`)
+      if (sum.never) parts.push(`${sum.never} 个从未登录`)
+      if (sum.disabled) parts.push(`${sum.disabled} 个已停用`)
+      hint.textContent = `${parts.join(' · ')} · ${sum.window_label || ''}`
+    }
+
+    if (!rows.length) {
+      box.innerHTML = '<div style="color:var(--dim);padding:22px;text-align:center">暂无后台账号</div>'
+      return
+    }
+
+    const windowText = sum.window_label || '近期'
+    box.innerHTML = rows.map((t) => {
+      const [label, cls] = TEAM_STATUS[t.status] || ['—', 'n']
+      const name = esc(t.display_name || t.username)
+      const last = lastLoginText(t)
+      const loginSet = new Set(t.login_dates || [])
+      const heat = axis
+        .map((day) => `<span class="heat-cell${loginSet.has(day) ? ' on' : ''}" title="${esc(day)}${loginSet.has(day) ? ' 已登录' : ''}"></span>`)
+        .join('')
+      return `<div class="team-card status-${esc(t.status)}${t.is_active ? '' : ' is-off'}">
+        <div class="team-top">
+          <span class="team-name" title="${esc(t.username)}">${name}</span>
+          <span class="team-badge ${cls}">${label}</span>
+        </div>
+        <div class="team-role">${esc(t.role_label)}${t.is_active ? '' : ' · 已停用'} · ${esc(t.username)}</div>
+        <div class="team-last">
+          <span class="team-last-l">最后登录</span>
+          <span class="team-last-v">${esc(last.main)}</span>
+          <span class="team-last-d">${esc(last.sub)}</span>
+        </div>
+        <div class="team-meta">
+          <span>${windowText}：登录 <b>${t.login_days}</b> 天</span>
+          <span>操作 <b>${t.action_count}</b> 次</span>
+        </div>
+        <div class="team-heat" aria-label="登录热力：一格一天">${heat}</div>
+      </div>`
+    }).join('')
+  }
+
   // ── 渲染主流程 ──────────────────────────
   // 图表部分单独成函数：跨档切换时可以用同一份数据重画，不必再打一次接口
   function renderCharts(d) {
@@ -1164,6 +1282,7 @@
     renderKPI(d)
     renderFunnel(d)
     renderCharts(d)
+    renderTeam(d)
     renderRecent(d)
     renderFeed(d)
 
@@ -1184,7 +1303,7 @@
     const cacheEl = $('cacheHint')
     if (cacheEl) cacheEl.hidden = !cached
 
-    setStamp('ok')
+    setStamp(state.live ? 'live' : 'ok')
     requestAnimationFrame(() => state.charts.forEach((c) => c.resize()))
   }
 
@@ -1257,6 +1376,7 @@
     if (!hint) return
     if (mode === 'loading') hint.textContent = '刷新中'
     else if (mode === 'stale') hint.textContent = `${state.countdown}s 后重试`
+    else if (mode === 'live') hint.textContent = '实时'
     else hint.textContent = `${state.countdown}s`
   }
 
@@ -1338,12 +1458,61 @@
 
   $('refreshBtn').addEventListener('click', () => load())
 
-  // 自动刷新：单一路径——每 60 秒轮询；失败后按 30s×失败次数退避（封顶 300s），
-  // 401 直接排到 300s 后再试，避免对着一个已知无效的口令反复敲门。
+  // ── 实时通道（SSE）──────────────────────
+  //
+  // 数据一变就刷新，靠服务端推送而不是把轮询间隔调小：
+  // 服务端每 3 秒比对一次「数据指纹」，变了才广播；数据没变就不查库。
+  // 连不上时自动退回 60 秒轮询（EventSource 本身也会按 retry 自动重连）。
+  let es = null
+  let reloadTimer = null
+
+  // 一次业务动作常会连着改多张表（入职会同时写 offers / summaries / audit_logs），
+  // 合并成一次请求，并避开正在进行的加载
+  function scheduleReload(delay) {
+    if (reloadTimer) return
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null
+      if (loading) { scheduleReload(250); return }
+      load()
+    }, delay || 0)
+  }
+
+  function connectStream() {
+    if (typeof EventSource === 'undefined') return
+    // ?nolive=1 关闭实时通道：截图 / 排查时用（长连接会让 headless 浏览器永不 idle）
+    if (new URLSearchParams(location.search).get('nolive') === '1') return
+    if (es) es.close()
+    es = new EventSource('/api/stream')
+
+    es.addEventListener('ready', () => {
+      state.live = true
+      setStamp('live')
+    })
+    es.addEventListener('data_changed', () => {
+      state.live = true
+      setStamp('live')
+      scheduleReload(200)
+    })
+    es.onerror = () => {
+      // 不手动重连：EventSource 会自己重试，这段时间靠轮询兜底
+      if (!state.live) return
+      state.live = false
+      state.countdown = 60
+      setStamp('ok')
+    }
+  }
+
+  // 自动刷新：实时通道在线时靠服务端推送（见 connectStream），这里只做兜底轮询；
+  // 失败后按 30s×失败次数退避（封顶 300s），401 直接排到 300s 后再试，
+  // 避免对着一个已知无效的口令反复敲门。
   setInterval(() => {
     if (document.hidden) return
-    state.countdown = Math.max(0, state.countdown - 1)
     const hint = $('refreshIn')
+    if (state.live) {
+      if (hint) hint.textContent = '实时'
+      return
+    }
+    state.countdown = Math.max(0, state.countdown - 1)
     if (hint) hint.textContent = state.failCount > 0 || state.authBlockedAt
       ? `${state.countdown}s 后重试`
       : `${state.countdown}s`
@@ -1370,6 +1539,7 @@
 
   applyUrlParams()
   load()
+  connectStream()
 })()</script>
 </body>
 </html>

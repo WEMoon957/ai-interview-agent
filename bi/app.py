@@ -13,7 +13,13 @@
 - **只读**：本文件不含任何写 SQL；数据库连接以 ``read_only`` 模式打开，
   即便代码被改坏，Postgres 层面也会拒绝写入。
 - **独立**：独立进程、独立端口（默认 8500）、独立依赖，不 import backend 的任何模块。
-- **零耦合**：不读 ``admin_users`` / ``admin_sessions``，与主系统鉴权体系完全无关。
+- **不参与鉴权**：不读 ``admin_sessions``、不校验密码、不签发 Cookie，与主系统登录体系无关。
+  唯一的例外是「账号活跃度」面板——它只 **SELECT** ``admin_users`` 的展示字段
+  （见 :func:`_q_team_activity`），用于 HR 最后登录与绩效参考，绝不触碰凭据列。
+
+实时性：进程内跑一个数据指纹探测任务（默认 3 秒），表有变化就通过 SSE
+（``/api/stream``）通知所有看板立即刷新；连不上时前端自动退回 60 秒轮询。
+``?nolive=1`` 可关闭实时通道（截图 / 排查用）。
 
 可选访问口令：设置 ``BI_ACCESS_TOKEN`` 后首次访问需带 ``?token=xxx``（校验通过后写 Cookie）；
 不设置则完全开放，适合内网展示大屏。
@@ -29,9 +35,12 @@
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -42,9 +51,12 @@ from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
+    StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 from psycopg.rows import dict_row
+
+logger = logging.getLogger("bi")
 
 # ── 配置 ─────────────────────────────────────────────────────
 
@@ -730,6 +742,98 @@ def _q_activity(conn, p, limit: int = 12) -> list[dict]:
     ]
 
 
+def _q_team_activity(conn, p) -> list[dict]:
+    """后台账号活跃度（HR / 管理员 / 店长）—— 最后登录 + 近期使用强度。
+
+    数据源与口径：
+
+    - ``admin_users.last_login_at``：登录成功时由后端写入，是「最后登录」的权威值；
+    - ``audit_logs`` 的 ``auth.login.success``：近 N 天**登录天数**（按北京时区去重到天）
+      与登录次数。天数比次数更能反映「有没有在日常干活」，次数容易被连续登录放大；
+    - ``audit_logs`` 里非 ``auth.*`` 的动作：近 N 天业务操作次数。
+
+    ⚠ 这是全站唯一读取 ``admin_users`` 的地方：只 SELECT 展示字段，
+    **不触碰 password_hash / failed_login_count / locked_until**。
+
+    以 ``__`` 开头的账号（如 ``__smoke_offer__``）是自检脚本用的，不是真人，
+    不参与绩效评定，直接排除，否则会出现「从未登录却操作几十次」的怪数据。
+    """
+    sql = """
+    SELECT u.id::text                                        AS user_id,
+           u.username,
+           u.display_name,
+           u.role,
+           u.is_active,
+           u.last_login_at,
+           EXTRACT(EPOCH FROM (now() - u.last_login_at)) / 86400.0 AS days_since_login,
+           coalesce(ls.login_count, 0)                       AS login_count,
+           coalesce(ls.login_dates, ARRAY[]::text[])         AS login_dates,
+           coalesce(ac.action_count, 0)                      AS action_count
+      FROM admin_users u
+      LEFT JOIN (
+          SELECT actor_id,
+                 count(*) AS login_count,
+                 array_agg(
+                     DISTINCT to_char((occurred_at AT TIME ZONE %(tz)s)::date, 'YYYY-MM-DD')
+                     ORDER BY to_char((occurred_at AT TIME ZONE %(tz)s)::date, 'YYYY-MM-DD')
+                 ) AS login_dates
+            FROM audit_logs
+           WHERE action = 'auth.login.success'
+             AND occurred_at >= %(start)s
+           GROUP BY actor_id
+      ) ls ON ls.actor_id = u.id
+      LEFT JOIN (
+          SELECT actor_id, count(*) AS action_count
+            FROM audit_logs
+           WHERE substr(action, 1, 5) <> 'auth.'   -- 排除登录/登出/改密等账号动作
+             AND occurred_at >= %(start)s
+           GROUP BY actor_id
+      ) ac ON ac.actor_id = u.id
+     WHERE left(u.username, 2) <> '__'   -- 排除自检 / 系统账号
+     ORDER BY u.last_login_at DESC NULLS LAST, u.username
+    """
+    role_labels = {"admin": "管理员", "hr": "HR", "store_manager": "店长"}
+
+    out: list[dict] = []
+    for r in _rows(conn, sql, p):
+        last = r["last_login_at"]
+        days = _num(r["days_since_login"])
+
+        if last is None:
+            status = "never"           # 从未登录
+        elif days is not None and days <= 7:
+            status = "active"          # 7 天内来过
+        elif days is not None and days <= 30:
+            status = "idle"            # 一个月内来过
+        else:
+            status = "inactive"        # 超过一个月没来
+
+        local = last.astimezone(CN_TZ) if last else None
+        # 登录日期列表用于前端画「近 30 天热力条」；全部时间口径下截断，避免传几百个日期
+        dates = sorted(r["login_dates"] or [])
+        out.append(
+            {
+                "user_id": r["user_id"],
+                "username": r["username"],
+                "display_name": (r["display_name"] or "").strip(),
+                "role": r["role"],
+                "role_label": role_labels.get(r["role"], r["role"]),
+                "is_active": bool(r["is_active"]),
+                # 最后登录：日期用于「绩效评定」口径，时间点用于看今天是否来过
+                "last_login_at": local.strftime("%Y-%m-%d %H:%M") if local else None,
+                "last_login_date": local.strftime("%Y-%m-%d") if local else None,
+                "last_login_time": local.strftime("%H:%M") if local else None,
+                "days_since_login": round(days, 1) if days is not None else None,
+                "login_days": len(dates),
+                "login_dates": dates[-60:],
+                "login_count": _int(r["login_count"]),
+                "action_count": _int(r["action_count"]),
+                "status": status,
+            }
+        )
+    return out
+
+
 # ── 组装 ─────────────────────────────────────────────────────
 
 
@@ -742,6 +846,7 @@ def build_dashboard(days: int, scope: str) -> dict:
         "scope_all": scope_all,
         "test_patterns": TEST_PATTERNS,
         "start": start,
+        "tz": TZ_CN,
     }
 
     with _connect() as conn:
@@ -759,6 +864,7 @@ def build_dashboard(days: int, scope: str) -> dict:
         trend = _q_trend(conn, params, start, days)
         recent = _q_recent(conn, params)
         activity = _q_activity(conn, params)
+        team = _q_team_activity(conn, params)
 
     # 派生指标
     ai_rate = _rate(funnel["ai_done"], funnel["created"])
@@ -808,6 +914,16 @@ def build_dashboard(days: int, scope: str) -> dict:
         "stores": stores,
         "recent": recent,
         "activity": activity,
+        "team": team,
+        "team_summary": {
+            "total": len(team),
+            "active": sum(1 for t in team if t["status"] == "active"),
+            "idle": sum(1 for t in team if t["status"] == "idle"),
+            "inactive": sum(1 for t in team if t["status"] == "inactive"),
+            "never": sum(1 for t in team if t["status"] == "never"),
+            "disabled": sum(1 for t in team if not t["is_active"]),
+            "window_label": "全部时间" if days <= 0 else f"近 {days} 天",
+        },
     }
 
 
@@ -912,4 +1028,154 @@ background:#0b1020;color:#e6edf7;font-family:system-ui,-apple-system,'PingFang S
 <div style="color:#8b9bb4;font-size:14px">请在地址后追加 <code>?token=你的口令</code> 后访问</div>
 </div></body></html>""",
         status_code=401,
+    )
+
+
+# ── 实时推送（SSE）──────────────────────────────────────────────
+#
+# 为什么不是「把前端轮询间隔调小」：
+#   - 间隔再小也是延迟，且数据没变时照样在查库，大屏越多空转越多；
+#   - 真正要的是「数据变了才刷新」。
+#
+# 做法：后台每 REALTIME_INTERVAL 秒算一次「数据指纹」（8 张业务表的行数 +
+# 最新 updated_at 拼成的短串，走 count/max，比全量聚合便宜得多）。
+# 指纹一变 → 清掉聚合缓存 → SSE 广播「数据变了」→
+# 各块大屏各自拉一次 /api/dashboard（同参数命中同一份缓存，不重复计算）。
+#
+# 代价：数据变更到上屏最多 REALTIME_INTERVAL 秒（默认 3 秒），展示场景足够。
+
+# 参与「数据是否变化」判断的业务表。表名是硬编码常量，不来自外部输入。
+_WATCH_TABLES = (
+    "job_postings",
+    "candidates",
+    "resume_screenings",
+    "interview_sessions",
+    "session_reports",
+    "offline_interviews",
+    "recruitment_summaries",
+    "offers",
+    "admin_users",   # 登录会写 last_login_at，改密码/停用也会改 updated_at
+    "audit_logs",    # 只增不改，用 count 就能感知
+)
+
+_FINGERPRINT_SQL = " UNION ALL ".join(
+    (
+        f"SELECT '{t}' AS t, count(*)::text AS c, coalesce(max(updated_at)::text, '') AS u FROM {t}"
+        if t != "audit_logs"  # audit_logs 没有 updated_at（只写不改）
+        else f"SELECT '{t}' AS t, count(*)::text AS c, '' AS u FROM {t}"
+    )
+    for t in _WATCH_TABLES
+)
+
+# 数据变更探测间隔（秒）
+REALTIME_INTERVAL = max(1.0, float(os.getenv("BI_REALTIME_INTERVAL", "3")))
+
+# SSE 订阅者队列（单 worker 部署，进程内广播；compose 已固定 --workers 1）
+_subscribers: set[asyncio.Queue] = set()
+
+# 上一次的数据指纹；None 表示尚未建立基线
+_last_fingerprint: str | None = None
+
+
+def _fingerprint() -> str:
+    """轻量数据指纹：任一表的行数或 updated_at 变化都会改变结果。"""
+    with _connect() as conn:
+        rows = _rows(conn, _FINGERPRINT_SQL)
+    return "|".join(f"{r['t']}:{r['c']}:{r['u']}" for r in rows)
+
+
+async def _watch_loop() -> None:
+    """后台任务：定期比对数据指纹，变化时清缓存并广播。"""
+    global _last_fingerprint
+
+    # 启动先记基线，避免服务一起来就误报「数据变了」
+    try:
+        _last_fingerprint = await asyncio.to_thread(_fingerprint)
+    except Exception:  # noqa: BLE001 - 数据库还没就绪不应拖垮服务
+        logger.warning("实时探测初始化失败，稍后自动重试", exc_info=True)
+
+    while True:
+        try:
+            await asyncio.sleep(REALTIME_INTERVAL)
+            fp = await asyncio.to_thread(_fingerprint)
+            if _last_fingerprint is not None and fp == _last_fingerprint:
+                continue
+
+            _last_fingerprint = fp
+            with _cache_lock:
+                _cache.clear()
+
+            if _subscribers:
+                logger.info("检测到数据变化，通知 %d 块看板", len(_subscribers))
+            for queue in list(_subscribers):
+                try:
+                    queue.put_nowait("data_changed")
+                except asyncio.QueueFull:
+                    # 客户端消费不过来就丢掉这次通知，等下一条；绝不能阻塞广播
+                    pass
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - 单次探测失败不影响下一轮
+            logger.warning("实时探测失败，下一轮重试", exc_info=True)
+
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    """起一个数据变更探测任务，进程关闭时优雅取消。"""
+    task = asyncio.create_task(_watch_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001
+            logger.warning("停止实时探测任务时异常", exc_info=True)
+
+
+# app 在文件上方已创建，这里回填 lifespan（定义顺序所限，不能用构造参数）
+app.router.lifespan_context = _lifespan
+
+
+@app.get("/api/stream")
+async def api_stream(request: Request):
+    """SSE 实时通道：数据一有变化就通知前端立刻刷新。
+
+    刻意只推「变了」这个信号，不推数据本身：
+    - 一块大屏可能同时开多个标签、或用不同口径（days/scope），推数据得按连接各算一份；
+    - 推信号后前端各自去取，相同参数命中同一份缓存。
+
+    空闲时每 20 秒发一次注释心跳，防止中间的 nginx / 云负载均衡把连接掐断。
+    """
+    queue: asyncio.Queue = asyncio.Queue(maxsize=8)
+    _subscribers.add(queue)
+    logger.info("看板接入实时通道，当前在线 %d", len(_subscribers))
+
+    async def event_gen():
+        try:
+            # retry 告诉浏览器断线后 3 秒重连
+            yield "retry: 3000\nevent: ready\ndata: {}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=20)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                yield f"event: {event}\ndata: {{}}\n\n"
+        finally:
+            _subscribers.discard(queue)
+            logger.info("看板断开实时通道，当前在线 %d", len(_subscribers))
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",  # 反代禁用缓冲，否则事件会被攒着不发
+            "Connection": "keep-alive",
+        },
     )
