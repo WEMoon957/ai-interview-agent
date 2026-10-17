@@ -251,7 +251,7 @@
 
   <main class="grid">
     <section class="panel span-5">
-      <h2>招聘转化漏斗<span class="hint">按建档候选人去重 · 全链路累计</span></h2>
+      <h2>招聘转化漏斗<span class="hint">按建档候选人去重 · 存在跳过环节时该步显示 —</span></h2>
       <div class="funnel" id="funnel"></div>
       <div class="funnel-total">
         <span>整体转化率（建档 → 入职）</span>
@@ -368,8 +368,12 @@
   // 支持 /?days=90&scope=real 直接定位视图（大屏部署时把固定视图写死进 URL）
   function applyUrlParams() {
     const p = new URLSearchParams(location.search)
-    const d = Number(p.get('days'))
-    if ([7, 30, 90, 0].includes(d)) state.days = d
+    // 注意：不能直接 Number(p.get('days')) —— 参数缺失时 get() 返回 null，
+    // Number(null) === 0 会被误判成「全部时间」。
+    if (p.has('days')) {
+      const d = Number(p.get('days'))
+      if ([7, 30, 90, 0].includes(d)) state.days = d
+    }
     const s = p.get('scope')
     if (s === 'all' || s === 'real') state.scope = s
     document.querySelectorAll('#daysSeg button').forEach((b) => {
@@ -463,7 +467,10 @@
       let cls = ''
       if (i === 0) {
         rateText = v ? '100%' : '—'
-      } else if (prev > 0) {
+      } else if (prev > 0 && v <= prev) {
+        // 只有「本层 ≤ 上层」时转化率才有业务含义；
+        // 本层反超上层说明有候选人跳过了该环节（如免初筛直接 AI 面试），
+        // 此时除法会得出 300% 这种误导性数字，一律显示 —
         const stepRate = v / prev
         rateText = fmtPct(stepRate, 0)
         cls = stepRate >= 0.7 ? 'hot' : (stepRate < 0.4 ? 'cold' : '')
