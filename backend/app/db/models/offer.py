@@ -99,6 +99,9 @@ class Offer(TimestampMixin, Base):
     expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     withdraw_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 候选人确认时填写的邮箱（必填，用于接受后发送《入职指引》邮件）
+    candidate_email: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
     # 候选人婉拒理由（自由文本）
     decline_reason_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
 

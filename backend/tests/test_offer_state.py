@@ -436,6 +436,23 @@ def test_accept_offer_rejected_when_expired():
     assert exc.value.http_status == 409
 
 
+def test_accept_offer_stores_candidate_email():
+    """接受时收集并落库候选人邮箱（strip 首尾空格）。"""
+    offer = _offer(status=svc.STATUS_SENT, token="tok")
+    svc.accept_offer(_FakeDB(), offer, candidate_email="Li@example.com ")
+    assert offer.status == svc.STATUS_ACCEPTED
+    assert offer.candidate_email == "Li@example.com"
+
+
+def test_accept_offer_rejects_invalid_email():
+    """邮箱格式非法时拒绝接受，且不流转状态。"""
+    offer = _offer(status=svc.STATUS_SENT, token="tok")
+    with pytest.raises(BizError) as exc:
+        svc.accept_offer(_FakeDB(), offer, candidate_email="not-an-email")
+    assert exc.value.http_status == 422
+    assert offer.status == svc.STATUS_SENT
+
+
 def test_decline_offer_records_free_text_reason():
     offer = _offer(status=svc.STATUS_SENT)
     svc.decline_offer(_FakeDB(), offer, reason_text=" 已经找到别的工作了 ")

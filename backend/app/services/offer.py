@@ -495,8 +495,18 @@ def onboard_offer(
     return offer
 
 
-def accept_offer(db: Session, offer: Offer) -> Offer:
-    """候选人接受（sent → accepted）；已接受时幂等返回。"""
+def accept_offer(db: Session, offer: Offer, *, candidate_email: str = "") -> Offer:
+    """候选人接受（sent → accepted）；已接受时幂等返回。
+
+    candidate_email：候选人确认时填写的邮箱（必填），用于接受后发送《入职指引》邮件。
+    无论是否首次接受都允许落库（幂等重复调用时也可补填 / 修正邮箱）。
+    """
+    email = (candidate_email or "").strip()
+    if email:
+        if "@" not in email or "." not in email.split("@")[-1] or len(email) > 254:
+            raise BizError(422, "邮箱格式不正确", http_status=422)
+        offer.candidate_email = email
+
     if offer.status == STATUS_ACCEPTED:
         return offer
     ensure_transition(offer.status, STATUS_ACCEPTED)

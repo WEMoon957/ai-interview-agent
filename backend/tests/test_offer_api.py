@@ -11,6 +11,7 @@ import pytest
 
 import app.api.offers as offers_mod
 from app.api.schemas import (
+    AcceptOffer,
     OfferCreate,
     OfferDecline,
     OfferOnboard,
@@ -427,7 +428,7 @@ def test_candidate_get_expired_token_returns_expired_status(monkeypatch):
 def test_candidate_accept_ok_pushes_notify(settings_md, notifier):
     offer = _offer(status=svc.STATUS_SENT, token="tok")
     db = _FakeDB(offers=[offer])
-    result = offers_mod.accept_offer("tok", db=db)
+    result = offers_mod.accept_offer("tok", AcceptOffer(email="li@example.com"), db=db)
     assert result["data"]["status"] == "accepted"
     assert notifier.events[0][0] == "accepted"
     assert db.commits >= 1
@@ -437,8 +438,14 @@ def test_candidate_accept_conflict_when_not_sent():
     offer = _offer(status=svc.STATUS_DRAFT, token="tok")
     db = _FakeDB(offers=[offer])
     with pytest.raises(BizError) as exc:
-        offers_mod.accept_offer("tok", db=db)
+        offers_mod.accept_offer("tok", AcceptOffer(email="li@example.com"), db=db)
     assert exc.value.http_status == 409
+
+
+def test_accept_offer_schema_requires_email():
+    """候选人接受请求体：邮箱为必填项（缺省由 FastAPI 返回 422）。"""
+    with pytest.raises(Exception):
+        AcceptOffer()
 
 
 def test_candidate_decline_ok_with_free_text(settings_md, notifier):

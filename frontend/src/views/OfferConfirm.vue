@@ -72,6 +72,19 @@
           确认剩余时间：<span class="remain">{{ remainText }}</span>
         </div>
 
+        <div class="email-field">
+          <label class="email-label">接收录用通知的邮箱 <span class="req">*</span></label>
+          <input
+            v-model.trim="candidateEmail"
+            class="email-input"
+            type="email"
+            inputmode="email"
+            placeholder="用于接收《入职指引》邮件，请填写常用邮箱"
+            :disabled="submitting"
+          />
+          <p v-if="emailError" class="email-error">{{ emailError }}</p>
+        </div>
+
         <div class="actions">
           <button class="btn primary" :disabled="submitting" @click="handleAccept">
             {{ submitting ? '提交中…' : '接受 Offer' }}
@@ -156,6 +169,8 @@ const submitting = ref(false)
 const showDecline = ref(false)
 const declineReason = ref('')
 const remainText = ref('')
+const candidateEmail = ref('')
+const emailError = ref('')
 let timer = null
 
 /** 实时剩余时间提示（每 30 秒刷新），让截止时间更直观。 */
@@ -202,9 +217,19 @@ async function load() {
 
 async function handleAccept() {
   if (submitting.value) return
+  emailError.value = ''
+  const email = (candidateEmail.value || '').trim()
+  if (!email) {
+    emailError.value = '请先填写接收通知的邮箱'
+    return
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    emailError.value = '邮箱格式不正确，请检查'
+    return
+  }
   submitting.value = true
   try {
-    const res = await acceptOffer(token)
+    const res = await acceptOffer(token, email)
     status.value = res?.status || 'accepted'
   } catch (err) {
     // 拦截器已提示错误；重新拉取以同步真实状态（例如已过期）
@@ -387,6 +412,44 @@ onUnmounted(() => {
   color: #dc2626;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.email-field {
+  margin-bottom: 20px;
+}
+
+.email-label {
+  display: block;
+  font-size: 14px;
+  color: #374151;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.email-label .req {
+  color: #dc2626;
+}
+
+.email-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 16px;
+  line-height: 1.5;
+  outline: none;
+  font-family: inherit;
+}
+
+.email-input:focus {
+  border-color: #6366f1;
+}
+
+.email-error {
+  color: #dc2626;
+  font-size: 13px;
+  margin: 8px 0 0;
 }
 
 .actions {

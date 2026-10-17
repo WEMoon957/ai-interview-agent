@@ -149,7 +149,8 @@ export const onboardOffer = (offerId, data) =>
 // 候选人端（token 即凭证）
 export const getOfferContext = (token) => request.get(`/offer/${token}`)
 
-export const acceptOffer = (token) => request.post(`/offer/${token}/accept`)
+export const acceptOffer = (token, email) =>
+  request.post(`/offer/${token}/accept`, { email })
 
 export const declineOffer = (token, data) => request.post(`/offer/${token}/decline`, data || {})
 

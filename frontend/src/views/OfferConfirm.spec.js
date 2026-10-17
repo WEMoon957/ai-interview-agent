@@ -124,14 +124,39 @@ describe('待确认（通知书版式）', () => {
     expect(w.exists()).toBe(true)
   })
 
-  it('点「接受 Offer」调用 acceptOffer', async () => {
+  it('填邮箱后点「接受 Offer」调用 acceptOffer(token, email)', async () => {
     acceptOffer.mockResolvedValue({ status: 'accepted' })
     const w = await mountWith({ status: 'sent', letter: LETTER })
+    const emailInput = w.find('input[type="email"]')
+    expect(emailInput.exists()).toBe(true)
+    await emailInput.setValue('li@example.com')
     const btn = w.findAll('button').find((b) => b.text().includes('接受'))
     expect(btn).toBeTruthy()
     await btn.trigger('click')
     await flushPromises()
-    expect(acceptOffer).toHaveBeenCalledWith('tok-1')
+    expect(acceptOffer).toHaveBeenCalledWith('tok-1', 'li@example.com')
+  })
+
+  it('未填邮箱点接受时拦截并提示', async () => {
+    acceptOffer.mockResolvedValue({ status: 'accepted' })
+    const w = await mountWith({ status: 'sent', letter: LETTER })
+    const btn = w.findAll('button').find((b) => b.text().includes('接受'))
+    await btn.trigger('click')
+    await flushPromises()
+    expect(acceptOffer).not.toHaveBeenCalled()
+    expect(w.text()).toContain('请先填写接收通知的邮箱')
+  })
+
+  it('邮箱格式不正确时拦截并提示', async () => {
+    acceptOffer.mockResolvedValue({ status: 'accepted' })
+    const w = await mountWith({ status: 'sent', letter: LETTER })
+    const emailInput = w.find('input[type="email"]')
+    await emailInput.setValue('not-an-email')
+    const btn = w.findAll('button').find((b) => b.text().includes('接受'))
+    await btn.trigger('click')
+    await flushPromises()
+    expect(acceptOffer).not.toHaveBeenCalled()
+    expect(w.text()).toContain('邮箱格式不正确')
   })
 })
 

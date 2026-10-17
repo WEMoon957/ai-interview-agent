@@ -320,6 +320,12 @@ class OfferDecline(BaseModel):
     reason_text: str = Field(default="", description="婉拒理由（自由文本）")
 
 
+class AcceptOffer(BaseModel):
+    """候选人接受 Offer 请求体（邮箱必填，用于接受后发送《入职指引》邮件）。"""
+
+    email: str = Field(min_length=1, max_length=254, description="候选人邮箱（必填）")
+
+
 # ── 后台登录鉴权（安全改造）────────────────────────────────────
 class LoginRequest(BaseModel):
     """后台登录请求体。

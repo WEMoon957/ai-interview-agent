@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, ok
 from app.api.schemas import (
+    AcceptOffer,
     OfferApprove,
     OfferCreate,
     OfferDecline,
@@ -338,13 +339,13 @@ def get_offer_context(token: str, db: Session = Depends(get_db)):
 
 
 @candidate_router.post("/{token}/accept")
-def accept_offer(token: str, db: Session = Depends(get_db)):
-    """候选人接受 Offer（幂等；非 sent 状态拒绝）。"""
+def accept_offer(token: str, payload: AcceptOffer, db: Session = Depends(get_db)):
+    """候选人接受 Offer（幂等；非 sent 状态拒绝；邮箱必填，用于接受后发送报到邮件）。"""
     row = svc.get_offer_by_token(db, token)
     svc.expire_due_offers(db)
     db.refresh(row)
 
-    svc.accept_offer(db, row)
+    svc.accept_offer(db, row, candidate_email=payload.email)
     db.commit()
     db.refresh(row)
 
@@ -352,7 +353,8 @@ def accept_offer(token: str, db: Session = Depends(get_db)):
     logger.info("候选人接受 Offer 通知结果 offer_id=%s: %s", row.id, notify)
 
     # 第二封邮件：录用要点 + 报到指引（幂等：非 sent 状态在服务层已被拒）
-    mail = mail_offer_accepted(row, candidate_email=offer_candidate_email(db, row))
+    # 收件邮箱取候选人确认时填写的邮箱（offers.candidate_email）
+    mail = mail_offer_accepted(row, candidate_email=row.candidate_email)
     logger.info("候选人接受确认邮件结果 offer_id=%s: %s", row.id, mail)
 
     return ok(
