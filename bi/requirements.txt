@@ -1,0 +1,4 @@
+# BI 看板是独立只读服务，依赖刻意压到最小（不引入 SQLAlchemy / LangChain 等业务栈）
+fastapi~=0.115.0
+uvicorn[standard]~=0.30.0
+psycopg[binary]~=3.2.0

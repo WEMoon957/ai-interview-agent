@@ -322,7 +322,7 @@
   </main>
 
   <footer>
-    <span><b>统计口径</b> 以「时间窗内建档的候选人」为队列，追踪其当前全链路状态，漏斗严格按人去重；趋势图按事件发生日独立统计。</span>
+    <span><b>统计口径</b> 以「时间窗内建档的候选人」为队列追踪当前状态，漏斗按人去重；Offer 接受率按 Offer 记录数计算；趋势图按事件发生日独立统计。</span>
     <span><b>数据来源</b> 招聘系统只读镜像 · 每 60 秒自动刷新</span>
     <span id="footerMeta"></span>
   </footer>
@@ -458,15 +458,22 @@
     $('funnel').innerHTML = rows.map((r, i) => {
       const v = f[r.k] || 0
       const prev = i === 0 ? v : (f[rows[i - 1].k] || 0)
-      const stepRate = i === 0 ? null : (prev ? v / prev : null)
       const w = Math.max(1.2, (v / max) * 100)
-      const cls = stepRate == null ? '' : (stepRate >= 0.7 ? 'hot' : (stepRate < 0.4 ? 'cold' : ''))
+      let rateText = '—'
+      let cls = ''
+      if (i === 0) {
+        rateText = v ? '100%' : '—'
+      } else if (prev > 0) {
+        const stepRate = v / prev
+        rateText = fmtPct(stepRate, 0)
+        cls = stepRate >= 0.7 ? 'hot' : (stepRate < 0.4 ? 'cold' : '')
+      }
       return `<div class="fr">
         <span class="idx">${String(i + 1).padStart(2, '0')}</span>
         <span class="nm">${r.n}</span>
         <div class="track"><div class="fill" style="width:${w}%;background:linear-gradient(90deg,${colors[i]}dd,${colors[i]}88)"></div></div>
         <span class="vl">${fmtInt(v)}</span>
-        <span class="rt ${cls}">${stepRate == null ? (first ? '100%' : '—') : fmtPct(stepRate, 0)}</span>
+        <span class="rt ${cls}">${rateText}</span>
       </div>`
     }).join('')
 
@@ -518,6 +525,7 @@
     emptyCheck('wrapJobs', !rows.length)
     const inst = chart('chJobs')
     if (!inst) return
+    if (!rows.length) { inst.clear(); return }
     inst.setOption({
       tooltip: Object.assign({
         trigger: 'axis', axisPointer: { type: 'shadow' },
@@ -561,6 +569,7 @@
     emptyCheck('wrapChannel', !rows.length || !total)
     const inst = chart('chChannel')
     if (!inst) return
+    if (!rows.length || !total) { inst.clear(); return }
     inst.setOption({
       tooltip: Object.assign({
         trigger: 'axis', axisPointer: { type: 'shadow' },
@@ -631,6 +640,7 @@
     emptyCheck('wrapOffer', !rows.length)
     const inst = chart('chOffer')
     if (!inst) return
+    if (!rows.length) { inst.clear(); return }
     const colorMap = {
       onboarded: C.green, accepted: '#5eead4', sent: C.blue, pending_approval: C.amber,
       draft: C.grey, rejected: C.red, declined: C.orange, expired: '#7c8aa8',
@@ -661,6 +671,7 @@
     emptyCheck('wrapVerdict', !rows.length)
     const inst = chart('chVerdict')
     if (!inst) return
+    if (!rows.length) { inst.clear(); return }
     const cm = { '强烈推荐': C.green, '推荐': C.blue, '待定': C.amber, '不推荐': C.red }
     const total = rows.reduce((s, r) => s + r.value, 0)
     inst.setOption({
@@ -687,6 +698,7 @@
     emptyCheck('wrapInterviewer', !rows.length)
     const inst = chart('chInterviewer')
     if (!inst) return
+    if (!rows.length) { inst.clear(); return }
     inst.setOption({
       tooltip: Object.assign({ trigger: 'axis', axisPointer: { type: 'shadow' } }, TOOLTIP),
       grid: { left: 2, right: 44, top: 6, bottom: 4, containLabel: true },
@@ -711,6 +723,7 @@
     emptyCheck('wrapStore', !rows.length)
     const inst = chart('chStore')
     if (!inst) return
+    if (!rows.length) { inst.clear(); return }
     inst.setOption({
       tooltip: Object.assign({
         trigger: 'axis', axisPointer: { type: 'shadow' },
@@ -866,6 +879,7 @@
     resizeTimer = setTimeout(() => state.charts.forEach((c) => c.resize()), 160)
   })
 
+  applyUrlParams()
   load()
 })()</script>
 </body>

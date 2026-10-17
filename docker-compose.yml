@@ -49,14 +49,13 @@ services:
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   bi:
-    # 招聘 BI 看板：独立只读服务（默认 8500），复用 backend 镜像已装的
-    # fastapi / uvicorn / psycopg，仅把 ./bi 挂到容器内运行，零额外依赖。
+    # 招聘 BI 看板：独立的**只读**展示服务（端口 8500）
+    # 用独立镜像（只装 fastapi/uvicorn/psycopg 三个依赖），不依赖 backend：
+    #   - 与业务栈解耦，看板挂了不影响招聘流程
+    #   - 可单独部署到另一台机器，只要网络能连到 PostgreSQL
     build:
-      context: ./backend
+      context: ./bi
     container_name: interview-agent-bi
-    working_dir: /bi
-    volumes:
-      - ./bi:/bi
     env_file:
       - .env
       - path: .env.local
@@ -64,17 +63,16 @@ services:
     environment:
       # 容器内通过服务名访问 postgres，覆盖 .env 中的 localhost
       DATABASE_URL: postgresql://interview:interview@postgres:5432/interview
-      # 默认口径：all=全部数据；正式对外展示前可改 real
+      # 默认口径：all=全部数据；正式对外展示前改成 real 可排除联调/演示岗位
       BI_DEFAULT_SCOPE: all
-      PIP_INDEX_URL: "https://mirrors.cloud.tencent.com/pypi/simple/"
-      PIP_TRUSTED_HOST: "mirrors.cloud.tencent.com"
+      # 聚合结果缓存秒数（多块大屏同时刷新时避免重复查库）
+      BI_CACHE_TTL: "60"
     ports:
       - "8500:8500"
     depends_on:
       postgres:
         condition: service_healthy
-    command: >
-      sh -c "uvicorn app:app --host 0.0.0.0 --port 8500"
+    restart: unless-stopped
 
   web:
     build:
