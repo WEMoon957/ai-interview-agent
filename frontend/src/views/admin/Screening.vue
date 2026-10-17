@@ -101,9 +101,18 @@
             <el-tag :type="statusType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="230">
+        <el-table-column label="操作" width="300">
           <template #default="{ row }">
             <el-button size="small" text type="primary" @click="openDetail(row)">详情</el-button>
+            <el-button
+              size="small"
+              text
+              type="primary"
+              :disabled="!row.candidate_id"
+              @click="handleRename(row)"
+            >
+              改名
+            </el-button>
             <el-button size="small" text type="primary" @click="copyLink(row)">答题链接</el-button>
             <el-button size="small" text type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
@@ -240,6 +249,7 @@ import {
   uploadResumes,
   inviteScreenings,
   deleteScreening,
+  renameCandidate,
   notifyScreenings,
 } from '../../api'
 
@@ -482,6 +492,42 @@ async function inviteSelected() {
     // 错误提示由请求拦截器统一弹出
   } finally {
     inviting.value = false
+  }
+}
+
+async function handleRename(row) {
+  if (!row.candidate_id) {
+    ElMessage.warning('该记录缺少候选人 id，无法改名')
+    return
+  }
+  let value
+  try {
+    const res = await ElMessageBox.prompt('请输入正确的候选人姓名', '修改候选人姓名', {
+      inputValue: row.candidate_name || '',
+      inputPlaceholder: '例如：李女士',
+      inputValidator: (v) => {
+        const s = (v || '').trim()
+        if (!s) return '姓名不能为空'
+        if (s.length > 50) return '姓名不能超过 50 个字'
+        return true
+      },
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+    })
+    value = (res.value || '').trim()
+  } catch {
+    return
+  }
+  if (!value || value === row.candidate_name) return
+  try {
+    await renameCandidate(row.candidate_id, value)
+    row.candidate_name = value
+    if (detail.value?.candidate_id === row.candidate_id) {
+      detail.value.candidate_name = value
+    }
+    ElMessage.success('姓名已更新')
+  } catch {
+    // 请求拦截器已统一提示
   }
 }
 

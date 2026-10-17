@@ -65,6 +65,10 @@ export const notifyScreenings = (data) => request.post('/admin/screenings/notify
 export const deleteScreening = (screeningId) =>
   request.delete(`/admin/screenings/${screeningId}`)
 
+// 修改候选人姓名（同步汇总/Offer 姓名快照）
+export const renameCandidate = (candidateId, name) =>
+  request.patch(`/admin/candidates/${candidateId}`, { name })
+
 // ── 线下复试（HR/店长约面 + 打分）────────────────────
 export const createOfflineInterview = (data) => request.post('/admin/offline-interviews', data)
 

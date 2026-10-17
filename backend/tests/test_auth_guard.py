@@ -31,6 +31,7 @@ client = TestClient(app)
         ("GET", "/admin/sessions"),
         ("GET", "/admin/company-profile"),
         ("GET", "/admin/screenings"),
+        ("PATCH", "/admin/candidates/00000000-0000-0000-0000-000000000000"),
         ("GET", "/admin/offline-interviews"),
         ("GET", "/admin/summary"),
         ("GET", "/admin/offers"),

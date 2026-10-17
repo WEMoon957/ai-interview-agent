@@ -8,12 +8,12 @@ import logging
 import re
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from sqlalchemy import nulls_last
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, ok
-from app.api.schemas import ScreeningInvite, ScreeningNotify
+from app.api.deps import get_db, ok, require_role
+from app.api.schemas import CandidateRename, ScreeningInvite, ScreeningNotify
 from app.config import get_settings
 from app.db.models import (
     Candidate,
@@ -21,10 +21,14 @@ from app.db.models import (
     InterviewTemplate,
     JobPosting,
     OfflineInterview,
+    Offer,
+    RecruitmentSummary,
     Resume,
     ResumeScreening,
 )
+from app.db.models.audit_log import ACTION_CANDIDATE_RENAME
 from app.exceptions import BizError
+from app.services import audit
 from app.services.cascade import candidate_is_orphan, purge_candidate
 from app.services.company_profile import snapshot_company_profile
 from app.services.feishu_notify import notify_interview_created, notify_screening_recommendations
@@ -329,6 +333,50 @@ def list_screenings(
     ).all()
     token_map = _session_token_map(db, [r.session_id for r in rows])
     return ok([_screening_out(r, token_map.get(r.session_id)) for r in rows])
+
+
+@router.patch("/candidates/{candidate_id}")
+def rename_candidate(
+    candidate_id: str,
+    payload: CandidateRename,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(require_role("admin", "hr")),
+):
+    """修改候选人姓名，并同步汇总/Offer 中的姓名快照。"""
+    cid = _parse_uuid(candidate_id, "candidate_id")
+    candidate = db.get(Candidate, cid)
+    if candidate is None:
+        raise BizError(404, "候选人不存在", http_status=404)
+
+    new_name = (payload.name or "").strip()
+    if not new_name:
+        raise BizError(422, "候选人姓名不能为空", http_status=422)
+    old_name = candidate.name
+    if new_name == old_name:
+        return ok({"id": str(cid), "name": old_name, "changed": False})
+
+    candidate.name = new_name
+    # 汇总/Offer 存的是姓名快照，必须同步，否则列表改了、报表还是旧名
+    db.query(RecruitmentSummary).filter(
+        RecruitmentSummary.candidate_id == cid
+    ).update({"candidate_name": new_name}, synchronize_session=False)
+    db.query(Offer).filter(
+        Offer.candidate_id == cid
+    ).update({"candidate_name": new_name}, synchronize_session=False)
+
+    # 先提交业务改动，再写审计：audit.record 失败时会 rollback，
+    # 若此时业务改动尚未提交，改名会被一起回滚。
+    db.commit()
+    audit.record(
+        db,
+        action=ACTION_CANDIDATE_RENAME,
+        request=request,
+        actor=user,
+        target=f"candidates/{cid}",
+        detail=f"{old_name} -> {new_name}",
+    )
+    return ok({"id": str(cid), "name": new_name, "changed": True})
 
 
 @router.post("/screenings/notify")

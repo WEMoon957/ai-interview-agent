@@ -199,6 +199,12 @@ class ScreeningNotify(BaseModel):
     min_score: float | None = Field(default=None, description="推荐门槛；留空用服务端默认（65）")
 
 
+class CandidateRename(BaseModel):
+    """修改候选人姓名。"""
+
+    name: str = Field(min_length=1, max_length=255, description="新姓名")
+
+
 class OfflineInterviewCreate(BaseModel):
     """创建线下复试安排。"""
 

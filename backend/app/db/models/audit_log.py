@@ -26,6 +26,7 @@ ACTION_USER_CREATED = "admin.user.created"
 ACTION_USER_DISABLED = "admin.user.disabled"
 ACTION_SESSION_REVOKED = "admin.session.revoked"
 ACTION_ADMIN_WRITE = "admin.write"
+ACTION_CANDIDATE_RENAME = "candidate.rename"
 
 
 class AuditLog(Base):

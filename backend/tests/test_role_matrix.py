@@ -81,6 +81,7 @@ def test_hr_data_routes_exclude_store_manager():
     """HR 职责数据（简历/会话/汇总/Offer/模板/公司档案）不得对店长开放。"""
     forbidden_prefixes = (
         "/admin/screenings",
+        "/admin/candidates",
         "/admin/sessions",
         "/admin/summary",
         "/admin/offers",
