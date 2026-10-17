@@ -520,3 +520,101 @@ def test_settings_notify_ready_cli_and_api():
 def test_settings_hr_department_id_list_parsing():
     s = make_settings(feishu_hr_department_ids=" od_a ,, od_b ")
     assert s.hr_department_id_list == ["od_a", "od_b"]
+
+
+# ────────────────────────────── 面试创建通知 ──────────────────────────────
+
+
+def test_build_interview_created_card_contains_fields():
+    card = fn.build_interview_created_card(
+        job_title="后厨帮厨",
+        items=[
+            {"candidate_name": "张三", "interview_path": "/i/tok-a"},
+            {"candidate_name": "李四", "interview_path": "/i/tok-b"},
+        ],
+        source="批量发起",
+        max_items=20,
+        base_url="https://hr.example.com",
+    )
+    assert card["header"]["template"] == "green"
+    assert card["header"]["title"]["content"] == "AI 面试已发起 · 请跟进"
+    md = fn.card_to_markdown(card)
+    assert "后厨帮厨" in md
+    assert "批量发起" in md
+    assert "已发起" in md
+    assert "张三" in md and "李四" in md
+    assert "https://hr.example.com/i/tok-a" in md
+    assert "https://hr.example.com/i/tok-b" in md
+
+
+def test_build_interview_created_card_handles_local_base():
+    card = fn.build_interview_created_card(
+        job_title="岗位X",
+        items=[{"candidate_name": "王五", "interview_path": "/i/tok-c"}],
+        source="后台手动创建",
+        max_items=20,
+        base_url="http://localhost:3000",
+    )
+    md = fn.card_to_markdown(card)
+    # 本机基址无法拼出绝对链接，但候选人姓名仍列出
+    assert "王五" in md
+
+
+def test_notify_interview_created_sent():
+    captured: dict = {}
+
+    def fake_sender(open_id, card, settings):
+        captured["open_id"] = open_id
+        captured["card"] = card
+        return True, ""
+
+    result = fn.notify_interview_created(
+        job_title="后厨帮厨",
+        items=[{"candidate_name": "张三", "interview_path": "/i/tok-a"}],
+        source="批量发起",
+        settings=make_settings(),
+        sender=fake_sender,
+    )
+    assert result["status"] == "sent"
+    assert result["recipients"] == ["ou_test_hr"]
+    assert captured["open_id"] == "ou_test_hr"
+    assert captured["card"]["header"]["template"] == "green"
+    assert "张三" in fn.card_to_markdown(captured["card"])
+
+
+def test_notify_interview_created_skipped_when_disabled():
+    result = fn.notify_interview_created(
+        job_title="x",
+        items=[{"candidate_name": "a", "interview_path": "/i/t"}],
+        settings=make_settings(feishu_interview_created_notify_enabled=False),
+    )
+    assert result["status"] == "skipped"
+
+
+def test_notify_interview_created_skipped_when_no_recipients():
+    result = fn.notify_interview_created(
+        job_title="x",
+        items=[{"candidate_name": "a", "interview_path": "/i/t"}],
+        settings=make_settings(feishu_hr_open_ids=""),
+    )
+    assert result["status"] == "skipped"
+    assert "未就绪" in result["reason"]
+
+
+def test_notify_interview_created_skipped_when_empty_items():
+    result = fn.notify_interview_created(
+        job_title="x", items=[], settings=make_settings()
+    )
+    assert result["status"] == "skipped"
+    assert "无可通知" in result["reason"]
+
+
+def test_notify_interview_created_failed_records_reason():
+    result = fn.notify_interview_created(
+        job_title="x",
+        items=[{"candidate_name": "a", "interview_path": "/i/t"}],
+        settings=make_settings(),
+        sender=lambda *_: (False, "230013 无可用范围"),
+    )
+    assert result["status"] == "failed"
+    assert "230013" in result["reason"]

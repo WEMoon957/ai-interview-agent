@@ -27,7 +27,7 @@ from app.db.models import (
 from app.exceptions import BizError
 from app.services.cascade import candidate_is_orphan, purge_candidate
 from app.services.company_profile import snapshot_company_profile
-from app.services.feishu_notify import notify_screening_recommendations
+from app.services.feishu_notify import notify_interview_created, notify_screening_recommendations
 from app.services.resume_parser import parse_resume
 from app.services.resume_screening import recommendation_from_score, screen_resume
 
@@ -139,6 +139,9 @@ async def upload_and_screen(
     batch_id = uuid.uuid4()
     succeeded, failed = 0, 0
     errors: list[dict] = []
+    # 免初筛直通模式下，逐个收集「已创建面试」用于结束后统一推 HR 卡片
+    direct_created: list[dict] = []
+    direct_job_title = ""
 
     for f in files:
         filename = f.filename or "未命名文件"
@@ -165,18 +168,15 @@ async def upload_and_screen(
 
             if use_direct:
                 # 免初筛：不做 AI 打分，直接建面试会话并把链接回写
-                session = InterviewSession(
-                    token=uuid.uuid4().hex,
-                    template_id=template.id,
-                    candidate_id=candidate.id,
-                    status="pending",
-                    thread_id=str(uuid.uuid4()),
-                    started_at=None,
-                    # 发链接时快照当前生效的公司介绍
-                    company_profile_snapshot=snapshot_company_profile(db),
-                )
-                db.add(session)
+                session = _create_session(db, candidate, template)
                 db.flush()
+                direct_created.append(
+                    {
+                        "candidate_name": candidate.name,
+                        "interview_path": f"/i/{session.token}",
+                    }
+                )
+                direct_job_title = job.title
                 screening = ResumeScreening(
                     job_id=jid,
                     candidate_id=candidate.id,
@@ -261,7 +261,7 @@ async def upload_and_screen(
             if invite_tpl is not None:
                 for s in passed:
                     try:
-                        _invite_one(db, s, invite_tpl)
+                        _invite_one(db, s, invite_tpl)  # 初筛模式自动发起的链接随推荐卡片推送
                     except Exception:  # noqa: BLE001 - 单人失败不影响其余
                         db.rollback()
                         logger.exception("自动生成面试链接失败（screening=%s）", s.id)
@@ -269,11 +269,27 @@ async def upload_and_screen(
     token_map = _session_token_map(db, [s.session_id for s in items])
     out_items = [_screening_out(s, token_map.get(s.session_id)) for s in items]
 
-    # 初筛完成后，把「推荐进入 AI 面试」的人以卡片推送给 HR（尽力而为，失败不影响上传结果）
-    notify_result: dict = {"status": "skipped", "reason": "免初筛直通模式不推送初筛榜单"}
-    if not use_direct and not notify:
+    # 推送分支：直通模式与初筛模式走不同通知
+    notify_result: dict = {"status": "skipped", "reason": "未触发推送"}
+    if use_direct:
+        # 免初筛直通：每人都已生成 AI 面试链接，给 HR 发一张「已发起」卡片
+        if direct_created:
+            try:
+                notify_result = notify_interview_created(
+                    job_title=direct_job_title,
+                    items=direct_created,
+                    source="免初筛直通",
+                )
+                logger.info("免初筛直通面试创建推送：%s", notify_result)
+            except Exception:  # noqa: BLE001 - 外部依赖异常不得阻断上传
+                logger.exception("免初筛直通面试创建推送异常，已忽略")
+                notify_result = {"status": "failed", "reason": "内部异常"}
+        else:
+            notify_result = {"status": "skipped", "reason": "本次未创建任何面试会话"}
+    elif not notify:
         notify_result = {"status": "skipped", "reason": "调用方指定不推送（notify=false）"}
-    elif not use_direct:
+    else:
+        # 初筛模式：推送推荐名单（含自动发起的链接，已覆盖「创建」通知，不再重复发本卡片）
         try:
             notify_result = notify_screening_recommendations(
                 job_title=job.title,
@@ -388,20 +404,18 @@ def _resolve_template(db: Session, job_id: uuid.UUID, template_id: str | None) -
     return tpl
 
 
-def _invite_one(
-    db: Session, screening: ResumeScreening, template: InterviewTemplate
-) -> dict:
-    """为一条初筛记录创建（或复用）AI 面试会话并回写状态。"""
-    # 已发起过则复用既有会话（幂等），避免重复建会话
-    if screening.session_id:
-        sess = db.get(InterviewSession, screening.session_id)
-        if sess is not None:
-            return _screening_out(screening, sess.token)
+def _create_session(
+    db: Session, candidate: Candidate, template: InterviewTemplate
+) -> InterviewSession:
+    """创建 AI 面试会话（带公司介绍快照）。调用方负责 commit。
 
+    统一收口会话创建逻辑，供「免初筛直通」「批量发起」「初筛自动发起」复用，
+    避免公司介绍快照等字段遗漏。
+    """
     session = InterviewSession(
         token=uuid.uuid4().hex,
         template_id=template.id,
-        candidate_id=screening.candidate_id,
+        candidate_id=candidate.id,
         status="pending",
         thread_id=str(uuid.uuid4()),
         started_at=None,
@@ -410,12 +424,30 @@ def _invite_one(
     )
     db.add(session)
     db.flush()
+    return session
 
+
+def _invite_one(
+    db: Session, screening: ResumeScreening, template: InterviewTemplate
+) -> tuple[dict, bool]:
+    """为一条初筛记录创建（或复用）AI 面试会话并回写状态。
+
+    Returns:
+        (序列化结果, 是否新建了会话)。复用既有会话时第二个元素为 False，
+        调用方据此决定是否计入「已发起」通知（幂等，避免重复推送）。
+    """
+    # 已发起过则复用既有会话（幂等），避免重复建会话
+    if screening.session_id:
+        sess = db.get(InterviewSession, screening.session_id)
+        if sess is not None:
+            return _screening_out(screening, sess.token), False
+
+    session = _create_session(db, screening.candidate, template)
     screening.session_id = session.id
     screening.status = "interview_sent"
     db.commit()
     db.refresh(screening)
-    return _screening_out(screening, session.token)
+    return _screening_out(screening, session.token), True
 
 
 @router.post("/screenings/invite")
@@ -425,15 +457,44 @@ def invite_candidates(payload: ScreeningInvite, db: Session = Depends(get_db)):
         raise BizError(422, "请至少选择一位候选人", http_status=422)
 
     results: list[dict] = []
+    created_items: list[dict] = []
+    created_job_title = ""
+    created_job_id: uuid.UUID | None = None
     for raw_id in payload.screening_ids:
         sid = _parse_uuid(raw_id, "screening_id")
         screening = db.get(ResumeScreening, sid)
         if screening is None:
             raise BizError(404, f"初筛记录不存在：{raw_id}", http_status=404)
         template = _resolve_template(db, screening.job_id, payload.template_id)
-        results.append(_invite_one(db, screening, template))
+        out, created = _invite_one(db, screening, template)
+        results.append(out)
+        if created:
+            created_items.append(
+                {
+                    "candidate_name": out.get("candidate_name")
+                    or (screening.candidate.name if screening.candidate else ""),
+                    "interview_path": out.get("interview_path"),
+                }
+            )
+            created_job_id = screening.job_id
 
-    return ok({"count": len(results), "items": results})
+    # 批量发起：结束后给 HR 发一张「已发起」卡片（幂等复用的不重复计入）
+    notify_result: dict = {"status": "skipped", "reason": "本次无新建面试"}
+    if created_items:
+        job = db.get(JobPosting, created_job_id) if created_job_id else None
+        created_job_title = job.title if job else ""
+        try:
+            notify_result = notify_interview_created(
+                job_title=created_job_title,
+                items=created_items,
+                source="批量发起",
+            )
+            logger.info("批量发起面试创建推送：%s", notify_result)
+        except Exception:  # noqa: BLE001 - 外部依赖异常不得阻断发起
+            logger.exception("批量发起面试创建推送异常，已忽略")
+            notify_result = {"status": "failed", "reason": "内部异常"}
+
+    return ok({"count": len(results), "items": results, "notify": notify_result})
 
 
 @router.delete("/screenings/{screening_id}")

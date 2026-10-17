@@ -1,4 +1,5 @@
 """管理端路由：模板 / 会话 / 报告。"""
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -24,7 +25,9 @@ from app.db.models import (
 )
 from app.exceptions import BizError
 from app.services.cascade import purge_candidate, purge_job, purge_template
+logger = logging.getLogger(__name__)
 from app.services.company_profile import get_active_profile, save_profile, snapshot_company_profile
+from app.services.feishu_notify import notify_interview_created
 from app.services.resume_parser import parse_resume
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -342,6 +345,24 @@ def create_session(
     db.commit()
     db.refresh(session)
 
+    # 创建面试后通知 HR（飞书卡片，附答题链接）；失败不影响创建结果
+    notify_result = {"status": "skipped", "reason": "未触发创建通知"}
+    try:
+        job = db.get(JobPosting, template.job_id)
+        notify_result = notify_interview_created(
+            job_title=job.title if job else "",
+            items=[
+                {
+                    "candidate_name": candidate.name,
+                    "interview_path": f"/i/{session.token}",
+                }
+            ],
+            source="后台手动创建",
+        )
+        logger.info("面试创建推送：%s", notify_result)
+    except Exception:  # noqa: BLE001 - 外部依赖异常不得阻断创建
+        logger.exception("面试创建推送异常，已忽略")
+
     return ok(
         {
             "id": str(session.id),
@@ -350,6 +371,7 @@ def create_session(
             "template_id": str(session.template_id),
             "candidate_id": str(session.candidate_id),
             "status": session.status,
+            "notify": notify_result,
         }
     )
 

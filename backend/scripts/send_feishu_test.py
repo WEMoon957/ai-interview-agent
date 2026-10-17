@@ -1,9 +1,10 @@
 """飞书 HR 通知通道自检脚本（不依赖业务流程，用于联调与排障）。
 
-三类消息都能单独自检：
+四类消息都能单独自检：
   ① interview —— AI 面试达标通知（Markdown 文本）
   ② screening —— 简历初筛推荐名单（交互卡片）
   ③ summary   —— 招聘汇总复核提醒（交互卡片，含 offer / 入职提示）
+  ④ interview_created —— AI 面试已发起通知（交互卡片，附答题链接）
 
 用途：验证外部通道是否打通，尤其是 HR 收件人 open_id、lark-cli 登录态、
 机器人可用范围（230013）、卡片消息是否被客户端正常渲染等易踩的坑。
@@ -19,7 +20,10 @@
     # 3) 预览 / 真发「汇总复核」卡片
     python scripts/send_feishu_test.py --kind summary --dry-run
 
-    # 4) 临时指定收件人（覆盖 .env，便于验证）
+    # 4) 预览 / 真发「AI 面试已发起」卡片
+    python scripts/send_feishu_test.py --kind interview_created --dry-run
+
+    # 5) 临时指定收件人（覆盖 .env，便于验证）
     python scripts/send_feishu_test.py --kind screening --open-id ou_xxx
 
 依赖 .env 中的 FEISHU_* 配置（见项目根 .env.example）。
@@ -40,6 +44,7 @@ from app.services.feishu_notify import (  # noqa: E402
     build_summary_task,
     build_screening_task,
     build_summary_card,
+    build_interview_created_card,
     card_to_markdown,
     create_tasks,
     default_card_sender,
@@ -85,6 +90,11 @@ SAMPLE_SUMMARY_ITEMS = [
     },
 ]
 
+SAMPLE_CREATED_ITEMS = [
+    {"candidate_name": "（自检候选人A）", "interview_path": "/i/self-test-token-a"},
+    {"candidate_name": "（自检候选人B）", "interview_path": "/i/self-test-token-b"},
+]
+
 
 def _build_payload(kind: str, settings) -> tuple[str, object, bool]:
     """构造待发送内容。返回 (预览文本, 发送载荷, 是否为卡片)。"""
@@ -111,6 +121,16 @@ def _build_payload(kind: str, settings) -> tuple[str, object, bool]:
         )
         return card_to_markdown(card), card, True
 
+    if kind == "interview_created":
+        card = build_interview_created_card(
+            job_title="（自检岗位）后厨帮厨",
+            items=SAMPLE_CREATED_ITEMS,
+            source="批量发起",
+            max_items=settings.feishu_notify_max_items,
+            base_url=settings.public_base_url_normalized,
+        )
+        return card_to_markdown(card), card, True
+
     text = build_notification_text(
         "（自检候选人）", "self-test-session", SAMPLE_REPORT, settings.feishu_notify_threshold
     )
@@ -124,8 +144,8 @@ def main() -> int:
     parser.add_argument(
         "--kind",
         default="interview",
-        choices=["interview", "screening", "summary"],
-        help="消息类型：interview=面试达标 | screening=初筛推荐卡片 | summary=汇总复核卡片",
+        choices=["interview", "screening", "summary", "interview_created"],
+        help="消息类型：interview=面试达标 | screening=初筛推荐卡片 | summary=汇总复核卡片 | interview_created=面试已发起卡片",
     )
     parser.add_argument(
         "--with-task",

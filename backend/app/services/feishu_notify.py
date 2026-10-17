@@ -1388,3 +1388,125 @@ def notify_summary_review(
         result["task"] = {"status": "skipped", "reason": "待办创建未启用"}
 
     return result
+
+
+# ══════════════════════════ 面试创建通知 ══════════════════════════
+#
+# 第四类自动推送：HR 在后台「创建 / 发起 AI 面试」（手动单个创建、批量发起、
+# 免初筛直通）时，给 HR 发一张「AI 面试已发起」卡片，附每人答题链接，
+# 让 HR 知道链接已生成、可转发候选人。
+# 与初筛推荐卡片的关系：初筛模式下的「自动发起」链接已随推荐卡片发出，
+# 因此自动发起路径不再单独发本卡片（避免重复）；本卡片只覆盖「显式发起」动作。
+
+
+def build_interview_created_card(
+    *,
+    job_title: str,
+    items: list[dict],
+    source: str = "",
+    max_items: int = 20,
+    base_url: str = "",
+) -> dict:
+    """构造「AI 面试已发起」卡片（绿色标题栏），支持一次批量发起多人。
+
+    Args:
+        job_title: 应聘岗位（批量发起通常同一岗位）。
+        items: 已发起名单，每项含 ``candidate_name`` 与 ``interview_path``（如 /i/{token}）。
+        source: 发起方式（后台手动创建 / 批量发起 / 免初筛直通）。
+        base_url: 对外基址，用于把 /i/{token} 拼成候选人可直接打开的绝对链接。
+    """
+    def _abs_url(path: str) -> str:
+        if not path:
+            return ""
+        if path.startswith("http://") or path.startswith("https://"):
+            return path
+        base = (base_url or "").rstrip("/")
+        return f"{base}{path}" if base else path
+
+    head = "\n".join(
+        [
+            f"**应聘岗位**：{job_title or '—'}",
+            f"**发起方式**：{source or '—'}",
+            f"**已发起**：{len(items)} 人",
+        ]
+    )
+
+    lines = []
+    for idx, item in enumerate(_cap(items, max_items), start=1):
+        name = item.get("candidate_name") or "（未填写姓名）"
+        line = f"{idx}. **{name}**"
+        url = _abs_url(item.get("interview_path") or "")
+        if url:
+            line += f"\n   AI 面试链接：{url}"
+        lines.append(line)
+    if len(items) > max_items:
+        lines.append(f"… 另有 {len(items) - max_items} 人未列出")
+
+    tail = (
+        "> 以上链接已生成，可直接转发候选人答题；候选人完成面试且综合分达标后，"
+        "系统会自动推送面试结论，无需手动跟进。"
+    )
+
+    return build_card(
+        "AI 面试已发起 · 请跟进",
+        "green",
+        [head, "**已发起名单**\n" + "\n".join(lines), tail],
+    )
+
+
+def notify_interview_created(
+    *,
+    job_title: str,
+    items: list[dict],
+    source: str = "",
+    settings: Settings | None = None,
+    sender: CardSender | None = None,
+) -> dict:
+    """创建 / 发起 AI 面试时通知 HR。绝不抛异常。
+
+    与初筛推荐卡片不同：本函数只负责「显式发起动作」的通知，
+    初筛模式下的自动发起链接已随推荐卡片发出，调用方不应再调用本函数。
+
+    Args:
+        job_title: 应聘岗位。
+        items: 已发起名单，每项含 ``candidate_name`` 与 ``interview_path``。
+        source: 发起方式说明。
+
+    Returns:
+        ``{"status": "sent"|"skipped"|"failed", ...}``；``warning`` 字段提示基址异常。
+    """
+    settings = settings or get_settings()
+
+    if not settings.feishu_interview_created_notify_enabled:
+        return {"status": "skipped", "reason": "面试创建推送未启用"}
+    if not settings.feishu_notify_ready:
+        return {"status": "skipped", "reason": "飞书通知未就绪（开关/收件人/传输凭据）"}
+
+    if not items:
+        return {"status": "skipped", "reason": "无可通知的已发起面试"}
+
+    base = settings.public_base_url_normalized
+    warning = ""
+    if any(it.get("interview_path") for it in items) and looks_like_local_base(base):
+        warning = (
+            f"卡片中的面试链接基址仍为本机地址（PUBLIC_BASE_URL={base or '未配置'}），"
+            "HR/候选人在自己机器上打不开；请改成公网地址，如 http://<服务器IP或域名>:3000"
+        )
+        logger.warning("飞书推送告警：%s", warning)
+
+    card = build_interview_created_card(
+        job_title=job_title,
+        items=items,
+        source=source,
+        max_items=settings.feishu_notify_max_items,
+        base_url=base,
+    )
+    ok, recipients, err = send_card(card, settings=settings, sender=sender)
+    if not ok:
+        return {
+            "status": "failed",
+            "reason": err or "未知错误",
+            "recipients": recipients,
+            "warning": warning,
+        }
+    return {"status": "sent", "recipients": recipients, "warning": warning}

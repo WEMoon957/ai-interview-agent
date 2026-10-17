@@ -98,6 +98,8 @@ class Settings(BaseSettings):
     # 待办截止时间（天数，相对今天）
     feishu_task_due_days: int = 2
     feishu_summary_notify_enabled: bool = True
+    # 分环节开关：创建 / 发起 AI 面试时通知 HR（后台手动创建 / 批量发起 / 免初筛直通）
+    feishu_interview_created_notify_enabled: bool = True
     # 单张卡片最多列出的候选人条数（超出只显示汇总数字，避免卡片过长）
     feishu_notify_max_items: int = 20
     # 传输方式：cli（复用本机已登录的 lark-cli，默认）| api（飞书 Open API 直连）
