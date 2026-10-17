@@ -114,6 +114,66 @@ def test_invite_mail_contains_link_and_deadline():
     assert "查看并接受 Offer" in html
 
 
+def test_invite_mail_contains_full_offer_letter():
+    """第一封邮件必须包含完整《录用通知书》信息，供候选人保存。"""
+    subject, html = mailer.build_offer_invite_mail(
+        candidate_name="李俊颖",
+        job_title="AI落地工程师",
+        store_name="南屏店",
+        report_date=None,
+        link="https://hire.example.com/o/tok123",
+        deadline="9月23日20:00",
+        report_time="上午 9:00",
+        work_location="昆明市西山区万达北塔2507",
+        contact_name="方玺",
+        contact_phone="17702348593",
+        probation_phrase="试用期为一个月",
+        probation_suffix="，可视情况提前转正",
+        probation_salary="4000 元/月",
+        regular_salary="4500 元/月",
+        materials=mailer.REPORT_MATERIALS,
+        legal_note="本通知为录用确认，具体权利义务以正式劳动合同为准。",
+        company_name="昆明笨二娘餐饮管理有限公司",
+        letter_date="2026年10月17日",
+        settings=_settings(),
+    )
+    assert "录用" in subject
+    for text in [
+        "工作地点",
+        "昆明市西山区万达北塔2507",
+        "联系人",
+        "方玺",
+        "17702348593",
+        "试用期为一个月",
+        "4000 元/月",
+        "4500 元/月",
+        "报到时间",
+        "上午 9:00",
+        "报到时请携带以下资料",
+        "本通知为录用确认",
+        "昆明笨二娘餐饮管理有限公司",
+        "2026年10月17日",
+    ]:
+        assert text in html
+    for material in mailer.REPORT_MATERIALS:
+        assert material in html
+
+
+def test_invite_mail_escapes_html_in_fields():
+    """动态字段需转义，避免姓名/岗位里的 HTML 注入邮件正文。"""
+    _, html = mailer.build_offer_invite_mail(
+        candidate_name="<script>alert(1)</script>",
+        job_title="A & B",
+        store_name="门店",
+        report_date=None,
+        link="https://x/o/t",
+        settings=_settings(),
+    )
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+    assert "A &amp; B" in html
+
+
 def test_accepted_mail_lists_all_materials():
     subject, html = mailer.build_offer_accepted_mail(
         candidate_name="李俊颖",

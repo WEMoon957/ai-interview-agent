@@ -20,6 +20,7 @@ from datetime import date, datetime, timezone
 from email.header import Header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape
 from typing import Any
 
 from app.config import Settings, get_settings
@@ -125,8 +126,8 @@ def _info_rows(rows: list[tuple[str, str]]) -> str:
     """把 (标签, 值) 列表渲染成表格式信息块（跳过空值）。"""
     items = "".join(
         f'<tr><td style="padding:6px 12px 6px 0;color:#8a919f;white-space:nowrap;'
-        f'vertical-align:top;">{k}</td>'
-        f'<td style="padding:6px 0;color:#1f2329;font-weight:600;">{v}</td></tr>'
+        f'vertical-align:top;">{escape(str(k))}</td>'
+        f'<td style="padding:6px 0;color:#1f2329;font-weight:600;">{escape(str(v))}</td></tr>'
         for k, v in rows
         if v
     )
@@ -135,13 +136,14 @@ def _info_rows(rows: list[tuple[str, str]]) -> str:
 
 def _button(text: str, link: str) -> str:
     """行动按钮（使用 table 承载，兼容不支持 padding 的客户端）。"""
+    href = escape(link or "", quote=True)
     return (
         '<div style="margin:24px 0;text-align:center;">'
-        f'<a href="{link}" style="display:inline-block;padding:12px 32px;background:#3370ff;'
+        f'<a href="{href}" style="display:inline-block;padding:12px 32px;background:#3370ff;'
         'color:#ffffff;font-size:16px;font-weight:600;text-decoration:none;border-radius:6px;">'
-        f"{text}</a></div>"
+        f"{escape(text)}</a></div>"
         f'<div style="font-size:12px;color:#8a919f;word-break:break-all;">若按钮无法点击，'
-        f'请复制此链接到浏览器打开：<br/>{link}</div>'
+        f"请复制此链接到浏览器打开：<br/>{escape(link or '')}</div>"
     )
 
 
@@ -156,37 +158,104 @@ def build_offer_invite_mail(
     report_date: Any,
     link: str,
     deadline: str = "",
+    report_time: str = "",
+    work_location: str = "",
+    contact_name: str = "",
+    contact_phone: str = "",
+    probation_phrase: str = "",
+    probation_suffix: str = "",
+    probation_salary: str = "",
+    regular_salary: str = "",
+    materials: list[str] | None = None,
+    legal_note: str = "",
+    company_name: str = "",
+    letter_date: str = "",
     settings: Settings | None = None,
 ) -> tuple[str, str]:
-    """第一封：Offer 通知 + 「查看并接受」入口。
+    """第一封：完整《录用通知书》+「查看并接受」入口。
+
+    正文包含候选人保存 Offer 所需的全部信息（岗位、地点、联系人、试用期/
+    转正薪资、报到时间、携带材料、法律声明、落款），与候选人确认页
+    ``/o/{token}`` 保持一致，方便候选人直接保存本邮件作为录用凭证。
 
     Returns:
         (主题, HTML 正文)
     """
     s = settings or get_settings()
-    company = s.mail_from_name.split("·")[0].strip() or "公司"
+    company = (company_name or s.mail_from_name.split("·")[0].strip() or "公司")
     subject = f"【录用通知】{candidate_name} 你好，{company}诚邀你加入"
 
     rows = _info_rows(
         [
             ("入职岗位", job_title),
             ("报到门店", store_name),
+            ("工作地点", work_location),
+            ("联系人", f"{contact_name} {contact_phone}".strip()),
             ("报到日期", _fmt_date(report_date)),
+            ("报到时间", report_time),
         ]
     )
+
+    # 薪资段落：试用期 + 转正（缺字段时只渲染存在的部分）
+    salary_parts: list[str] = []
+    if probation_phrase or probation_salary:
+        line = probation_phrase or "试用期"
+        if probation_salary:
+            line += f"，试用期薪资为{probation_salary}"
+        line += probation_suffix or ""
+        salary_parts.append(line)
+    if regular_salary:
+        salary_parts.append(f"转正后综合薪资{regular_salary}")
+    salary_html = (
+        "<p style='margin:12px 0;'>"
+        + "<br/>".join(escape(x) for x in salary_parts)
+        + "</p>"
+        if salary_parts
+        else ""
+    )
+
+    # 报到携带材料（与候选人确认页、第二封邮件共用同一份清单）
+    materials_html = ""
+    if materials:
+        items = "".join(
+            f'<li style="margin-bottom:6px;">{escape(m)}</li>' for m in materials
+        )
+        materials_html = (
+            '<div style="margin:20px 0 0;padding:14px 16px;background:#f7f8fa;border-radius:8px;">'
+            '<div style="font-weight:700;margin-bottom:8px;">报到时请携带以下资料</div>'
+            f'<ol style="margin:0;padding-left:20px;color:#1f2329;">{items}</ol></div>'
+        )
+
+    legal_html = (
+        f"<p style='margin:16px 0 0;color:#4e5969;'>{escape(legal_note)}</p>"
+        if legal_note
+        else ""
+    )
     deadline_line = (
-        f'<p style="margin:16px 0 0;color:#d4380d;">请在 <b>{deadline}</b> 前完成确认，'
+        f'<p style="margin:16px 0 0;color:#d4380d;">请在 <b>{escape(deadline)}</b> 前完成确认，'
         "逾期将视为放弃本次录用。</p>"
         if deadline
         else ""
     )
+    sign_html = (
+        '<div style="margin:24px 0 0;text-align:right;color:#1f2329;">'
+        f"<p style='margin:0;'>{escape(company_name)}</p>"
+        f"<p style='margin:4px 0 0;'>日期：{escape(letter_date)}</p></div>"
+        if (company_name or letter_date)
+        else ""
+    )
+
     body = (
-        f"<p style='margin:0 0 12px;'>{candidate_name} 你好：</p>"
+        f"<p style='margin:0 0 12px;'>{escape(candidate_name)} 你好：</p>"
         "<p style='margin:0 0 12px;'>很高兴通知你，经面试评估，我们决定录用你加入我们的团队。"
-        "请点击下方按钮查看完整的《录用通知书》，并在页面上确认接受。</p>"
+        "以下是你的《录用通知书》完整内容，请仔细阅读并保存本邮件。</p>"
         f"{rows}"
-        f"{_button('查看并接受 Offer', link)}"
+        f"{salary_html}"
+        f"{materials_html}"
+        f"{legal_html}"
         f"{deadline_line}"
+        f"{sign_html}"
+        f"{_button('查看并接受 Offer', link)}"
         "<p style='margin:16px 0 0;color:#8a919f;font-size:13px;'>"
         "如对录用条件有疑问，可直接联系 HR 沟通。</p>"
     )
@@ -221,10 +290,10 @@ def build_offer_accepted_mail(
         ]
     )
     materials = "".join(
-        f'<li style="margin-bottom:6px;">{m}</li>' for m in REPORT_MATERIALS
+        f'<li style="margin-bottom:6px;">{escape(m)}</li>' for m in REPORT_MATERIALS
     )
     body = (
-        f"<p style='margin:0 0 12px;'>{candidate_name} 你好：</p>"
+        f"<p style='margin:0 0 12px;'>{escape(candidate_name)} 你好：</p>"
         "<p style='margin:0 0 12px;'>我们已经收到你对录用通知的确认，欢迎加入我们！"
         "以下是你的入职信息，请按约定时间到岗报到。</p>"
         f"{rows}"

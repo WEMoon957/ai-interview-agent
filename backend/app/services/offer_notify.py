@@ -402,13 +402,30 @@ def mail_offer_invite(
     if not deadline and getattr(offer, "expires_at", None):
         deadline = format_deadline(offer.expires_at, s)
 
+    # 组装与候选人页面一致的《录用通知书》完整数据（固定文案 + HR 填写 + 系统带出）
+    from app.services.offer_letter import build_letter
+
+    letter = build_letter(offer)
+
     subject, html = mailer.build_offer_invite_mail(
-        candidate_name=offer.candidate_name or "",
-        job_title=offer.job_title or "",
+        candidate_name=letter["candidate_name"] or offer.candidate_name or "",
+        job_title=letter["job_title"] or offer.job_title or "",
         store_name=offer.store_name or "",
         report_date=offer.report_date,
         link=link,
-        deadline=deadline,
+        deadline=deadline or letter["deadline"],
+        report_time=letter["report_time"],
+        work_location=letter["work_location"],
+        contact_name=letter["contact_name"],
+        contact_phone=letter["contact_phone"],
+        probation_phrase=letter["probation_phrase"],
+        probation_suffix=letter["probation_suffix"],
+        probation_salary=letter["probation_salary"],
+        regular_salary=letter["regular_salary"],
+        materials=letter["materials"],
+        legal_note=letter["legal_note"],
+        company_name=letter["company_name"],
+        letter_date=letter["letter_date"],
         settings=s,
     )
     ok, err = mailer.send_mail(to, subject, html, settings=s)

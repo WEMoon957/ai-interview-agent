@@ -54,6 +54,18 @@ def main() -> int:
         report_date=SAMPLE_DATE,
         link=SAMPLE_LINK,
         deadline="2026年10月23日 20:00",
+        report_time="上午 9:00",
+        work_location="昆明市西山区万达北塔2507",
+        contact_name="方玺",
+        contact_phone="17702348593",
+        probation_phrase="试用期为一个月",
+        probation_suffix="，可视情况提前转正",
+        probation_salary="4000 元/月",
+        regular_salary="4500 元/月",
+        materials=mailer.REPORT_MATERIALS,
+        legal_note="本通知为录用确认，具体权利义务以正式劳动合同为准。",
+        company_name="昆明笨二娘餐饮管理有限公司",
+        letter_date="2026年10月17日",
         settings=settings,
     )
     subject2, html2 = mailer.build_offer_accepted_mail(
