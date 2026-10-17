@@ -109,6 +109,10 @@ class Settings(BaseSettings):
     # HR 收件部门（open_department_id，od- 开头），多个用英文逗号分隔；
     # 推送时按部门实时解析成员 open_id（自动纳入新入职成员，过滤离职/冻结）
     feishu_hr_department_ids: str = ""
+    # 全局抄送人 open_id（ou_ 开头），多个用英文逗号分隔。
+    # **所有**飞书推送（HR 通知 / Offer 审批 / Offer 结果 / 店长通知）都会额外抄送一份，
+    # 不受各流程原本收件人限制。用途：测试期统一收口，或主管监看全部通知。
+    feishu_observer_open_ids: str = ""
     # cli 传输：lark-cli 可执行文件路径（留空则自动探测 PATH 与受管安装目录）
     feishu_lark_cli_path: str = ""
     # api 传输：自建应用凭据（transport=api 时必填）
@@ -221,6 +225,15 @@ class Settings(BaseSettings):
         return [
             item.strip()
             for item in (self.feishu_hr_department_ids or "").split(",")
+            if item.strip()
+        ]
+
+    @property
+    def observer_open_id_list(self) -> list[str]:
+        """全局抄送人 open_id 列表（所有推送都会额外发给这些人）。"""
+        return [
+            item.strip()
+            for item in (self.feishu_observer_open_ids or "").split(",")
             if item.strip()
         ]
 

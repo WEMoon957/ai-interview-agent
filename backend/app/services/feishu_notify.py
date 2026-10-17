@@ -459,6 +459,28 @@ def resolve_recipients(settings: Settings | None = None) -> tuple[list[str], str
     return unique, "; ".join(errors)
 
 
+def merge_observers(
+    recipients: list[str], settings: Settings | None = None
+) -> list[str]:
+    """把全局抄送人（``FEISHU_OBSERVER_OPEN_IDS``）并入收件人列表，去重保序。
+
+    用于「无论卡片/通知原本发给谁，指定人都要收到一份」的监看或测试场景：
+    - HR 通知 → HR 收件人 + 抄送人；
+    - Offer 审批 → 审批人 + 抄送人；
+    - Offer 结果 / 店长通知 → 原收件人 + 抄送人。
+
+    即使原本没有解析到任何收件人，只要配置了抄送人，也会只发给抄送人。
+    """
+    s = settings or get_settings()
+    seen: set[str] = set()
+    merged: list[str] = []
+    for open_id in [*recipients, *s.observer_open_id_list]:
+        if open_id and open_id not in seen:
+            seen.add(open_id)
+            merged.append(open_id)
+    return merged
+
+
 # ────────────────────────────── 编排：达标 -> 发送 -> 置位 ──────────────────────────────
 
 
@@ -475,9 +497,10 @@ def send_notification(
     """
     settings = settings or get_settings()
     recipients, resolve_err = resolve_recipients(settings)
+    recipients = merge_observers(recipients, settings)
     if not recipients:
         return False, [], resolve_err or (
-            "未解析到任何 HR 收件人（请检查 FEISHU_HR_OPEN_IDS / FEISHU_HR_DEPARTMENT_IDS）"
+            "未解析到任何 HR 收件人（请检查 FEISHU_HR_OPEN_IDS / FEISHU_HR_DEPARTMENT_IDS / FEISHU_OBSERVER_OPEN_IDS）"
         )
 
     send = sender or default_sender
@@ -929,9 +952,10 @@ def send_card(
     """向所有配置的 HR 收件人发送卡片；任一人成功即视为成功。"""
     settings = settings or get_settings()
     recipients, resolve_err = resolve_recipients(settings)
+    recipients = merge_observers(recipients, settings)
     if not recipients:
         return False, [], resolve_err or (
-            "未解析到任何 HR 收件人（请检查 FEISHU_HR_OPEN_IDS / FEISHU_HR_DEPARTMENT_IDS）"
+            "未解析到任何 HR 收件人（请检查 FEISHU_HR_OPEN_IDS / FEISHU_HR_DEPARTMENT_IDS / FEISHU_OBSERVER_OPEN_IDS）"
         )
 
     send = sender or default_card_sender

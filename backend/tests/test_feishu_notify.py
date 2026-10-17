@@ -23,6 +23,7 @@ def make_settings(**overrides) -> Settings:
         feishu_notify_transport="cli",
         feishu_hr_open_ids="ou_test_hr",
         feishu_hr_department_ids="",
+        feishu_observer_open_ids="",
         feishu_lark_cli_path="",
         feishu_app_id="",
         feishu_app_secret="",
@@ -618,3 +619,41 @@ def test_notify_interview_created_failed_records_reason():
     )
     assert result["status"] == "failed"
     assert "230013" in result["reason"]
+
+
+# ────────────────────────────── 全局抄送人 ──────────────────────────────
+
+
+def test_merge_observers_appends_and_dedups():
+    s = make_settings(
+        feishu_hr_open_ids="ou_a", feishu_observer_open_ids=" ou_b , ou_a ,, "
+    )
+    assert fn.merge_observers(["ou_a"], s) == ["ou_a", "ou_b"]
+
+
+def test_send_card_includes_observer():
+    s = make_settings(feishu_hr_open_ids="ou_a", feishu_observer_open_ids="ou_obs")
+    sent: list[str] = []
+
+    def sender(open_id, card, settings):
+        sent.append(open_id)
+        return True, ""
+
+    ok, recipients, _err = fn.send_card({"header": {}}, settings=s, sender=sender)
+    assert ok is True
+    assert recipients == ["ou_a", "ou_obs"]
+    assert sent == ["ou_a", "ou_obs"]
+
+
+def test_send_card_sends_to_observer_even_without_hr():
+    """即使没配 HR 收件人，只要配了全局抄送人也要送达。"""
+    s = make_settings(feishu_hr_open_ids="", feishu_observer_open_ids="ou_obs")
+    sent: list[str] = []
+
+    def sender(open_id, card, settings):
+        sent.append(open_id)
+        return True, ""
+
+    ok, _recipients, _err = fn.send_card({"header": {}}, settings=s, sender=sender)
+    assert ok is True
+    assert sent == ["ou_obs"]

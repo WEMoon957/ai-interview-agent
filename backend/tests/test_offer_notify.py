@@ -56,6 +56,7 @@ def _settings(**kw) -> Settings:
         feishu_task_enabled=False,
         feishu_hr_open_ids="ou_hr1,ou_hr2",
         feishu_hr_department_ids="",
+        feishu_observer_open_ids="",
         offer_approver_open_ids="ou_boss",
         feishu_store_manager_open_ids="ou_mgr,ou_hr1",
     )
@@ -207,6 +208,25 @@ def test_targets_accepted_merges_hr_and_store_manager_dedup():
 def test_targets_declined_goes_to_hr_only():
     targets, _ = on.resolve_targets(on.EVENT_DECLINED, _offer(), _settings())
     assert targets == ["ou_hr1", "ou_hr2"]
+
+
+def test_targets_pending_approval_includes_observer():
+    """审批卡片原收件人是审批人，全局抄送人也要额外收到一份。"""
+    targets, _ = on.resolve_targets(
+        on.EVENT_PENDING_APPROVAL,
+        _offer(),
+        _settings(feishu_observer_open_ids="ou_obs"),
+    )
+    assert targets == ["ou_boss", "ou_obs"]
+
+
+def test_targets_accepted_includes_observer_dedup():
+    targets, _ = on.resolve_targets(
+        on.EVENT_ACCEPTED,
+        _offer(),
+        _settings(feishu_observer_open_ids="ou_obs,ou_hr1"),
+    )
+    assert targets == ["ou_hr1", "ou_hr2", "ou_mgr", "ou_obs"]
 
 
 # ── 推送编排 ─────────────────────────────────────────────────

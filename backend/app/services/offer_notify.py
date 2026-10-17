@@ -17,6 +17,7 @@ from app.services.feishu_notify import (
     build_card,
     create_tasks,
     default_card_sender,
+    merge_observers,
     resolve_recipients,
 )
 from app.services.offer import format_deadline, status_label
@@ -246,20 +247,15 @@ def resolve_targets(
         approvers = s.offer_approver_list
         if not approvers:
             return [], "未配置 Offer 审批人（OFFER_APPROVER_OPEN_IDS）"
-        return approvers, ""
+        # 审批人之外，全局抄送人始终额外收到一份（测试/监看）
+        return merge_observers(approvers, s), ""
 
     hr_ids, err = resolve_recipients(s)
     if event != EVENT_ACCEPTED:
-        return hr_ids, err
+        return merge_observers(hr_ids, s), err
 
-    # 候选人接受：HR + 店长（去重保序）
-    seen: set[str] = set()
-    merged: list[str] = []
-    for open_id in [*hr_ids, *s.store_manager_list]:
-        if open_id and open_id not in seen:
-            seen.add(open_id)
-            merged.append(open_id)
-    return merged, err
+    # 候选人接受：HR + 店长 + 全局抄送人（去重保序，抄送人排最后）
+    return merge_observers([*hr_ids, *s.store_manager_list], s), err
 
 
 # 需要额外建飞书待办的事件（卡片容易被消息刷过去，待办会留在待办列表里）
