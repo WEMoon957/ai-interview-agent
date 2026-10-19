@@ -38,9 +38,12 @@ _USER_INFO_URL = "https://open.feishu.cn/open-apis/authen/v1/user_info"
 # access_token 提前 5 分钟刷新，避免临界失效
 _REFRESH_AHEAD_SECONDS = 300
 
-# 默认 scope：搜索 + 导出逐字稿 + 离线访问（拿 refresh_token）
+# 默认 scope：搜索 + 基础信息读 + 导出逐字稿 + 离线访问（拿 refresh_token）
+# 注意：缺 minutes:minutes.basic:read 时，get minute / 拉逐字稿会报
+# 99991679（用户身份缺少 minutes:minutes.basic:read 权限），必须一并申请。
 DEFAULT_SCOPES = (
     "minutes:minutes.search:read "
+    "minutes:minutes.basic:read "
     "minutes:minutes.transcript:export "
     "offline_access"
 )
