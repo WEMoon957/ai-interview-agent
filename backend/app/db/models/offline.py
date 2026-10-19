@@ -74,6 +74,11 @@ class OfflineInterview(TimestampMixin, Base):
     ai_comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ai_scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # 结构化问答抽取（问题 + 回答亮点）—— 由逐字稿富化而来，**仅数据看板（bi/）消费**；
+    # 业务系统序列化（_offline_out）刻意不返回，属「不做业务展示」的约定。
+    qa_extract: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    qa_extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # 打分结果（人工）
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 维度得分：[{"key","name","score","max_score"}]

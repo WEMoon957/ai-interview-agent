@@ -354,6 +354,52 @@
   .heat-cell{flex:1;height:7px;border-radius:2px;background:rgba(255,255,255,.06);transition:background .2s}
   .heat-cell.on{background:var(--status-color,var(--green));opacity:.92}
 
+  /* ── 面试录音问答（点击一行看问题 / 回答亮点）── */
+  .qa-list{display:flex;flex-direction:column;gap:8px;max-height:430px;overflow:auto}
+  .qa-row{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;
+    padding:10px 13px;border-radius:11px;cursor:pointer;text-align:left;
+    background:rgba(255,255,255,.022);border:1px solid var(--border);
+    border-left:2px solid var(--amber);color:inherit;font:inherit;
+    transition:background .18s,border-color .18s,transform .12s}
+  .qa-row:hover{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.4)}
+  .qa-row:active{transform:scale(.995)}
+  .qa-main{min-width:0}
+  .qa-name{display:block;font-size:var(--fs-3);font-weight:600;color:#e8eefc;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qa-sub{display:block;font-size:var(--fs-1);color:var(--dim);margin-top:3px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qa-count{font-size:var(--fs-1);color:#fcd34d;background:rgba(251,191,36,.14);
+    border:1px solid rgba(251,191,36,.28);padding:2px 9px;border-radius:999px;white-space:nowrap}
+  .qa-go{color:var(--dim);font-size:var(--fs-5);line-height:1}
+
+  /* 问答弹层 */
+  .qa-modal{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:24px}
+  .qa-modal[hidden]{display:none}
+  .qa-mask{position:absolute;inset:0;background:rgba(4,7,14,.72);
+    -webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+  .qa-card{position:relative;z-index:1;width:min(880px,100%);max-height:86vh;display:flex;flex-direction:column;
+    background:rgba(14,20,36,.98);border:1px solid var(--border);border-radius:16px;
+    box-shadow:0 30px 80px rgba(0,0,0,.6);animation:qaIn .16s ease}
+  @keyframes qaIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .qa-head{display:flex;align-items:flex-start;gap:14px;padding:18px 20px 14px;border-bottom:1px solid var(--border-soft)}
+  .qa-head h3{margin:0;font-size:var(--fs-5);font-weight:650;color:#eef3ff}
+  .qa-head .qa-meta{margin:5px 0 0;font-size:var(--fs-1);color:var(--dim)}
+  .qa-x{margin-left:auto;flex:none;width:34px;height:34px;border-radius:9px;border:1px solid var(--border);
+    background:transparent;color:var(--muted);font-size:20px;line-height:1;cursor:pointer}
+  .qa-x:hover{background:rgba(255,255,255,.06);color:#fff}
+  .qa-body{padding:16px 20px 20px;overflow:auto;display:flex;flex-direction:column;gap:14px}
+  .qa-overall{font-size:var(--fs-2);line-height:1.7;color:#cbd7ee;background:rgba(79,140,255,.08);
+    border:1px solid rgba(79,140,255,.22);border-radius:11px;padding:11px 14px}
+  .qa-overall b{color:#93b9ff;margin-right:6px}
+  .qa-pair{padding:12px 14px;border-radius:11px;background:rgba(255,255,255,.025);border:1px solid var(--border-soft)}
+  .qa-q{display:flex;gap:9px;font-size:var(--fs-3);color:#e8eefc;font-weight:600;line-height:1.6}
+  .qa-q .qa-i{flex:none;color:var(--amber);font-weight:700}
+  .qa-a{margin:8px 0 0 22px;font-size:var(--fs-2);line-height:1.7;color:#c2cde4}
+  .qa-hl{margin:9px 0 0 22px;display:flex;flex-wrap:wrap;align-items:center;gap:7px}
+  .qa-hl span{font-size:var(--fs-1);line-height:1.7;padding:2px 9px;border-radius:999px;
+    background:rgba(52,211,153,.13);color:#6ee7b7;border:1px solid rgba(52,211,153,.28)}
+  .qa-hl .qa-hl-l{background:transparent;border:0;color:var(--dim);padding:0}
+
   footer{
     margin-top:16px;padding-top:12px;border-top:1px solid var(--border-soft);
     display:flex;gap:18px;flex-wrap:wrap;font-size:var(--fs-1);color:var(--dim);line-height:1.9;
@@ -426,6 +472,58 @@
   @media (prefers-reduced-motion:reduce){
     *{animation:none!important;transition:none!important}
   }
+  /* ── 分层视图切换（高管 / HR 职能 / 运营明细）────────────── */
+  body[data-view="exec"] .panel:not([data-view="exec"]),
+  body[data-view="hr"]   .panel:not([data-view="hr"]),
+  body[data-view="ops"]  .panel:not([data-view="ops"]){display:none!important}
+  body[data-view="hr"]   #kpis,
+  body[data-view="ops"]  #kpis{display:none!important}
+  #viewSeg{margin-left:6px}
+  #viewSeg button{padding:5px 12px;font-size:var(--fs-1)}
+
+  /* ── 高管记分卡（KPI 状态色 RAG）────────────── */
+  .kpi[data-status="green"]{--accent:#34d399}
+  .kpi[data-status="yellow"]{--accent:#fbbf24}
+  .kpi[data-status="red"]{--accent:#f87171}
+  .kpi[data-status="na"]{--accent:var(--muted)}
+  .kpi .kpi-top{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px}
+  .kpi .kpi-top .l{margin-bottom:0;white-space:normal}
+  .kpi .tag{font-size:10px;line-height:1;padding:2px 6px;border-radius:999px;
+    border:1px solid var(--border);color:var(--dim);white-space:nowrap;flex:none}
+  .kpi .tag-leading{color:#7dd3fc;border-color:rgba(125,211,252,.35);background:rgba(125,211,252,.08)}
+  .kpi .tag-lagging{color:#c4b5fd;border-color:rgba(196,181,253,.35);background:rgba(196,181,253,.08)}
+  .kpi .tag-context{color:var(--dim)}
+  .kpi .badge{position:absolute;right:12px;top:12px;font-size:11px;font-weight:700;
+    width:18px;height:18px;line-height:18px;text-align:center;border-radius:50%}
+  .badge-green{color:#34d399}
+  .badge-yellow{color:#fbbf24}
+  .badge-red{color:#f87171;animation:pulseRed 1.4s ease-in-out infinite}
+  .badge-na{color:var(--dim)}
+  @keyframes pulseRed{0%,100%{opacity:1}50%{opacity:.35}}
+  .kpi .kpi-rule{margin-top:7px;font-size:var(--fs-1);line-height:1.35;color:var(--dim);
+    border-top:1px dashed var(--border);padding-top:6px;white-space:normal;
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .kpi .kpi-rule b{color:var(--muted);font-weight:600}
+
+  /* ── 高管简报（叙事 + 风险预警 / 行动项 + 机会点）────────────── */
+  .exec-grid{display:grid;grid-template-columns:1.4fr 1fr;gap:16px}
+  @media (max-width:900px){.exec-grid{grid-template-columns:1fr}}
+  .exec-narrative{font-size:var(--fs-3);line-height:1.75;color:#cdd8ef}
+  .exec-block{background:rgba(10,16,30,.5);border:1px solid var(--border);border-radius:12px;padding:11px 13px;margin-bottom:12px}
+  .exec-block-h{font-size:var(--fs-2);font-weight:600;color:#d6e0f5;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+  .exec-block-h .cnt{font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;background:rgba(248,113,113,.15);color:#f87171}
+  .exec-alerts,.exec-opps{list-style:none;margin:0;padding:0}
+  .exec-alerts li,.exec-opps li{font-size:var(--fs-1);line-height:1.5;padding:8px 0;border-top:1px solid rgba(120,150,200,.1)}
+  .exec-alerts li:first-child,.exec-opps li:first-child{border-top:none}
+  .exec-alerts .lab{font-weight:600;color:var(--text)}
+  .exec-alerts .meta{color:var(--dim);font-size:10px;margin:2px 0 3px}
+  .exec-alerts .rule{color:var(--muted)}
+  .alert-red .lab{color:#f87171}.alert-yellow .lab{color:#fbbf24}
+  .exec-opps li{color:#9ae6b4}
+  .badge-sm{font-size:10px;font-weight:700;padding:0 6px;border-radius:999px;margin-left:4px}
+  .badge-sm.badge-red{color:#f87171;background:rgba(248,113,113,.12)}
+  .badge-sm.badge-yellow{color:#fbbf24;background:rgba(251,191,36,.12)}
+  .badge-sm.badge-green{color:#34d399;background:rgba(52,211,153,.12)}
 </style>
 <script>
 /* 大屏档位判定（尽早执行，避免首帧按小档字号渲染后再跳大）。
@@ -464,7 +562,7 @@
 })()
 </script>
 </head>
-<body>
+<body data-view="exec">
 <div id="progress"></div>
 <div class="err" id="err" role="status" aria-live="polite"></div>
 
@@ -499,6 +597,11 @@
         <button data-scope="all" class="on" aria-pressed="true">全部数据</button>
         <button data-scope="real" aria-pressed="false">仅真实岗位</button>
       </div>
+      <div class="seg" id="viewSeg" role="group" aria-label="看板视图">
+        <button data-view="exec" class="on" aria-pressed="true">高管视图</button>
+        <button data-view="hr" aria-pressed="false">HR 职能</button>
+        <button data-view="ops" aria-pressed="false">运营明细</button>
+      </div>
       <span class="scope-badge" id="scopeBadge" data-scope="all">含联调/演示数据</span>
       <div class="stamp" id="stamp" role="status" aria-live="polite">
         <span class="dot"></span><span id="updatedAt">连接中…</span><span id="fetchedAt" class="refresh-in"></span><span id="refreshIn" class="refresh-in"></span><span class="cache-hint" id="cacheHint" hidden>命中缓存</span>
@@ -511,10 +614,26 @@
     访问口令已过期，请在地址后加 ?token= 重新打开
   </div>
 
-  <section class="kpis" id="kpis" aria-label="关键指标"><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div></section>
+  <section class="kpis" id="kpis" data-view="exec" aria-label="关键指标"><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div><div class="kpi is-skeleton"></div></section>
 
   <main class="grid">
-    <section class="panel span-5" style="--rule-accent:var(--blue)" aria-label="招聘转化漏斗">
+    <section class="panel span-12" data-view="exec" aria-label="高管简报">
+      <h2>高管简报<span class="hint">数据驱动 · 自动生成</span></h2>
+      <div class="exec-grid">
+        <div class="exec-narrative" id="execNarrative">加载中…</div>
+        <div class="exec-side">
+          <div class="exec-block">
+            <div class="exec-block-h">风险预警 / 行动项 <span class="cnt" id="execAlertCount" hidden>0</span></div>
+            <ul class="exec-alerts" id="execAlerts"><li class="state is-loading">加载中…</li></ul>
+          </div>
+          <div class="exec-block" id="execOppBlock" hidden>
+            <div class="exec-block-h">机会点</div>
+            <ul class="exec-opps" id="execOpps"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="panel span-5" style="--rule-accent:var(--blue)" aria-label="招聘转化漏斗" data-view="hr">
       <h2>招聘转化漏斗<span class="hint">按建档候选人去重 · 存在跳过环节时该步显示 —</span></h2>
       <div class="funnel" id="funnel"></div>
       <div class="funnel-total">
@@ -524,53 +643,58 @@
       <div class="notice" id="cohortNotice" hidden>7 天窗口按「窗口内建档」追踪，入职率天然偏低；建议对比 90 天或全部。</div>
     </section>
 
-    <section class="panel span-7" style="--rule-accent:var(--cyan)" aria-label="每日动态趋势">
+    <section class="panel span-7" style="--rule-accent:var(--cyan)" aria-label="每日动态趋势" data-view="hr">
       <h2>每日动态趋势<span class="hint" id="trendHint">按事件发生日统计</span></h2>
       <div class="chart-wrap" id="wrapTrend"><div class="chart" id="chTrend"></div></div>
     </section>
 
-    <section class="panel span-7" style="--rule-accent:var(--blue)" aria-label="岗位招聘进展">
+    <section class="panel span-7" style="--rule-accent:var(--blue)" aria-label="岗位招聘进展" data-view="hr">
       <h2>岗位招聘进展<span class="hint">按候选人数量排序 · Top 8</span></h2>
       <div class="chart-wrap" id="wrapJobs"><div class="chart h240" id="chJobs"></div></div>
     </section>
 
-    <section class="panel span-5" style="--rule-accent:var(--cyan)" aria-label="候选人来源渠道">
+    <section class="panel span-5" style="--rule-accent:var(--cyan)" aria-label="候选人来源渠道" data-view="hr">
       <h2>候选人来源渠道<span class="hint">按建档分布</span></h2>
       <div class="chart-wrap" id="wrapChannel"><div class="chart h240" id="chChannel"></div></div>
     </section>
 
-    <section class="panel span-7" style="--rule-accent:var(--purple)" aria-label="各环节得分分布">
+    <section class="panel span-7" style="--rule-accent:var(--purple)" aria-label="各环节得分分布" data-view="hr">
       <h2>各环节得分分布<span class="hint">百分制 · 分 6 档</span></h2>
       <div class="avg-strip" id="scoreAvg"></div>
       <div class="chart-wrap" id="wrapScore"><div class="chart" id="chScore"></div></div>
     </section>
 
-    <section class="panel span-5" style="--rule-accent:var(--amber)" aria-label="Offer 状态">
+    <section class="panel span-5" style="--rule-accent:var(--amber)" aria-label="Offer 状态" data-view="hr">
       <h2>Offer 状态<span class="hint">按 Offer 记录 · 含草稿/驳回</span></h2>
       <div class="chart-wrap" id="wrapOffer"><div class="chart" id="chOffer"></div></div>
     </section>
 
-    <section class="panel span-4 pair" style="--rule-accent:var(--green)" aria-label="汇总结论分布">
+    <section class="panel span-4 pair" style="--rule-accent:var(--green)" aria-label="汇总结论分布" data-view="hr">
       <h2>汇总结论分布<span class="hint">AI 综合评级</span></h2>
       <div class="chart-wrap" id="wrapVerdict"><div class="chart h210" id="chVerdict"></div></div>
     </section>
 
-    <section class="panel span-4 pair" style="--rule-accent:var(--purple)" aria-label="面试官工作量">
+    <section class="panel span-4 pair" style="--rule-accent:var(--purple)" aria-label="面试官工作量" data-view="hr">
       <h2>面试官工作量<span class="hint">线下复试场次</span></h2>
       <div class="chart-wrap" id="wrapInterviewer"><div class="chart h210" id="chInterviewer"></div></div>
     </section>
 
-    <section class="panel span-4" style="--rule-accent:var(--green)" aria-label="门店 Offer 分布">
+    <section class="panel span-4" style="--rule-accent:var(--green)" aria-label="门店 Offer 分布" data-view="hr">
       <h2>门店 Offer 分布<span class="hint">Top 6</span></h2>
       <div class="chart-wrap" id="wrapStore"><div class="chart h210" id="chStore"></div></div>
     </section>
 
-    <section class="panel span-12" style="--rule-accent:var(--cyan)" aria-label="账号活跃度">
+    <section class="panel span-12" style="--rule-accent:var(--cyan)" aria-label="账号活跃度" data-view="ops">
       <h2>HR / 账号活跃度<span class="hint" id="teamHint">最后登录 · 绩效参考</span></h2>
       <div class="team" id="team"></div>
     </section>
 
-    <section class="panel span-8 full-lg" style="--rule-accent:var(--blue)" aria-label="候选人汇总明细">
+    <section class="panel span-12" style="--rule-accent:var(--amber)" aria-label="面试录音问答" data-view="ops">
+      <h2>面试录音问答<span class="hint">点击一行查看「问了什么 · 回答亮点」</span></h2>
+      <div class="qa-list" id="qaList"><div class="state is-loading">加载中…</div></div>
+    </section>
+
+    <section class="panel span-8 full-lg" style="--rule-accent:var(--blue)" aria-label="候选人汇总明细" data-view="ops">
       <h2>候选人汇总明细<span class="hint">最近 25 条 · 按汇总时间</span></h2>
       <div class="table-tools">
         <input id="tableSearch" type="search" placeholder="搜索姓名 / 岗位" aria-label="搜索候选人" autocomplete="off" />
@@ -591,7 +715,7 @@
       </div>
     </section>
 
-    <section class="panel span-4 full-lg" style="--rule-accent:var(--cyan)" aria-label="最新动态">
+    <section class="panel span-4 full-lg" style="--rule-accent:var(--cyan)" aria-label="最新动态" data-view="ops">
       <h2>最新动态<span class="hint">建档 / 面试 / Offer / 入职</span></h2>
       <div class="feed" id="feed"><div class="state is-loading">加载中…</div></div>
     </section>
@@ -602,6 +726,20 @@
     <span><b>数据来源</b> 招聘系统只读镜像 · 每 60 秒自动刷新</span>
     <span id="footerMeta"></span>
   </footer>
+</div>
+
+<div class="qa-modal" id="qaModal" hidden>
+  <div class="qa-mask" data-close></div>
+  <div class="qa-card" role="dialog" aria-modal="true" aria-label="面试问答详情">
+    <div class="qa-head">
+      <div>
+        <h3 id="qaModalTitle">面试问答</h3>
+        <p class="qa-meta" id="qaModalMeta"></p>
+      </div>
+      <button class="qa-x" type="button" data-close aria-label="关闭">×</button>
+    </div>
+    <div class="qa-body" id="qaModalBody"></div>
+  </div>
 </div>
 
 <script src="/static/echarts.min.js"></script>
@@ -692,7 +830,7 @@
 
   // ── 状态 ────────────────────────────────
   const state = {
-    days: 30, scope: 'all', timer: null, countdown: 60, charts: [],
+    days: 30, scope: 'all', view: 'exec', timer: null, countdown: 60, charts: [],
     live: false,           // SSE 实时通道是否在线；在线时靠推送刷新，不走倒计时轮询
     failCount: 0,          // 连续失败次数：决定退避间隔，成功后清零
     lastSuccess: null,     // 最近一次成功渲染的时间（Date），用于「数据已过期」文案
@@ -704,6 +842,7 @@
     sortKey: null,         // 'final' | 'time' | null
     sortDesc: true,
     query: '',
+    qaRows: [],            // 面试问答列表原始行，供点击弹层取用
   }
   const $ = (id) => document.getElementById(id)
 
@@ -728,6 +867,8 @@
       b.classList.toggle('on', on)
       b.setAttribute('aria-pressed', String(on))
     })
+    const vw = p.get('view')
+    setView((vw === 'exec' || vw === 'hr' || vw === 'ops') ? vw : 'exec')
     syncScopeBadge()
   }
 
@@ -735,7 +876,23 @@
     const u = new URL(location.href)
     u.searchParams.set('days', String(state.days))
     u.searchParams.set('scope', state.scope)
+    u.searchParams.set('view', state.view)
     history.replaceState(null, '', u)
+  }
+
+  // 分层视图切换：切换 body[data-view] 即可让 CSS 隐藏非当前视图的面板；
+  // 被隐藏过的图表容器尺寸为 0，必须在显示后 resize 一次才能正确绘制
+  function setView(v) {
+    if (v !== 'exec' && v !== 'hr' && v !== 'ops') v = 'exec'
+    state.view = v
+    document.body.dataset.view = v
+    document.querySelectorAll('#viewSeg button').forEach((b) => {
+      const on = b.dataset.view === v
+      b.classList.toggle('on', on)
+      b.setAttribute('aria-pressed', String(on))
+    })
+    syncUrl()
+    requestAnimationFrame(() => state.charts.forEach((c) => { try { c.resize() } catch (e) {} }))
   }
 
   // 口径徽标：把「现在看的是全部数据还是仅真实岗位」直接写在页面上，
@@ -778,26 +935,63 @@
     return inst
   }
 
-  // ── KPI ─────────────────────────────────
-  function renderKPI(d) {
-    const k = d.kpi
-    // 顺序按「结果 → 过程 → 规模」：前两张是老板真正关心的结果指标，加大字号
-    const cards = [
-      { l: '入职到岗', v: fmtInt(k.onboarded), u: '人', s: `到岗率 <b>${fmtPct(k.onboard_rate)}</b> · 未报到 <b>${k.no_show}</b>`, c: C.green, p: true },
-      { l: 'Offer 接受率', v: k.accept_rate == null ? '—' : (k.accept_rate * 100).toFixed(0), u: k.accept_rate == null ? '' : '%', s: `已决 <b>${d.offer_metrics.decided}</b> 份 · 接受 <b>${d.offer_metrics.accepted}</b>`, c: C.orange, p: true },
-      { l: '候选人建档', v: fmtInt(k.candidates), u: '人', s: `${d.meta.window_label} · 在招 <b>${k.active_jobs}</b> 岗`, c: C.blue },
-      { l: '完成 AI 面试', v: fmtInt(k.ai_done), u: '人', s: `完成率 <b>${fmtPct(k.ai_rate)}</b>`, c: C.cyan },
-      { l: '完成线下复试', v: fmtInt(k.offline_done), u: '人', s: `占 AI 面试 <b>${fmtPct(k.ai_done ? k.offline_done / k.ai_done : null)}</b>`, c: C.purple },
-      { l: '发出 Offer', v: fmtInt(k.offer_sent), u: '份', s: `按 Offer 记录 · 待审批 <b>${k.offer_pending}</b> 份`, c: C.amber },
-      { l: '平均招聘周期', v: k.days_to_offer == null ? '—' : k.days_to_offer.toFixed(1), u: k.days_to_offer == null ? '' : '天', s: `建档 → 发 Offer · 到岗 <b>${k.days_to_onboard == null ? '—' : k.days_to_onboard.toFixed(1)}</b> 天`, c: C.pink },
-      { l: '在招岗位', v: fmtInt(k.active_jobs), u: '个', s: `岗位总数 <b>${d.meta.total_jobs}</b>`, c: C.muted },
-    ]
-    $('kpis').innerHTML = cards.map((c) => `
-      <div class="kpi${c.p ? ' primary' : ''}" style="--accent:${c.c}">
-        <div class="l">${c.l}</div>
-        <div class="v${String(c.v).length > 5 ? ' is-long' : ''}">${c.v}${c.u ? `<small>${c.u}</small>` : ''}</div>
-        <div class="s">${c.s}</div>
-      </div>`).join('')
+  // ── 高管记分卡（KPI + 目标 + 达成状态 RAG + 领先/滞后 + 决策规则）──
+  function renderScorecard(d) {
+    const sc = d.scorecard
+    if (!sc) return
+    const cards = (sc.cards || []).map((c) => {
+      const tierLabel = c.tier === 'leading' ? '领先' : (c.tier === 'lagging' ? '滞后' : (c.tier === 'context' ? '背景' : ''))
+      const badge = c.status === 'green' ? '✓' : (c.status === 'yellow' ? '⚠' : (c.status === 'red' ? '✗' : '·'))
+      let valDisp = '—', tgtDisp = '—', long = false
+      if (c.value != null) {
+        if (c.type === 'rate') { valDisp = (c.value * 100).toFixed(0); tgtDisp = (c.target * 100).toFixed(0) }
+        else if (c.type === 'days') { valDisp = Number(c.value).toFixed(1); tgtDisp = Number(c.target).toFixed(0) }
+        else { valDisp = fmtInt(c.value); tgtDisp = (c.target == null ? '—' : fmtInt(c.target)) }
+      }
+      const unit = c.unit || ''
+      long = String(valDisp).length > 5
+      const targetNote = c.target == null ? '规模背景 · 不设目标' : `目标 <b>${tgtDisp}${unit}</b> · ${c.delta_text}`
+      const ruleTxt = c.tier === 'context' ? (c.definition || '') : `负责人 ${c.owner} · ${c.rule}`
+      return `<div class="kpi" data-status="${c.status}">
+        <div class="kpi-top"><span class="l">${c.label}</span><span class="tag tag-${c.tier}">${tierLabel}</span></div>
+        <div class="v${long ? ' is-long' : ''}">${valDisp}${unit ? `<small>${unit}</small>` : ''}</div>
+        <div class="s">${targetNote}</div>
+        <span class="badge badge-${c.status}">${badge}</span>
+        <div class="kpi-rule" title="${esc(c.definition)}">${esc(ruleTxt)}</div>
+      </div>`
+    }).join('')
+    $('kpis').innerHTML = cards
+  }
+
+  // ── 高管简报：叙事 + 风险预警/行动项 + 机会点 ──
+  function renderExec(d) {
+    const sc = d.scorecard
+    if (!sc) return
+    $('execNarrative').textContent = sc.narrative || ''
+    const alerts = sc.alerts || []
+    const alertEl = $('execAlerts')
+    const cntEl = $('execAlertCount')
+    if (!alerts.length) {
+      cntEl.hidden = true
+      alertEl.innerHTML = '<li class="state">🎉 各项指标处于绿色区间，无需立即处置</li>'
+    } else {
+      cntEl.hidden = false
+      cntEl.textContent = String(alerts.length)
+      alertEl.innerHTML = alerts.map((a) => `
+        <li class="alert-${a.status}">
+          <span class="lab">${esc(a.label)}</span><span class="badge-sm badge-${a.status}">${a.status === 'red' ? '红区' : '黄区'}</span>
+          <div class="meta">负责人 ${esc(a.owner)} · ${esc(a.delta_text)}</div>
+          <div class="rule">${esc(a.rule)}</div>
+        </li>`).join('')
+    }
+    const opps = sc.opportunities || []
+    const oppBlock = $('execOppBlock')
+    if (opps.length) {
+      oppBlock.hidden = false
+      $('execOpps').innerHTML = opps.map((o) => `<li>${esc(o)}：显著优于目标，建议乘势加码（扩渠道 / 加名额）</li>`).join('')
+    } else {
+      oppBlock.hidden = true
+    }
   }
 
   // ── 漏斗 ────────────────────────────────
@@ -1277,14 +1471,65 @@
     renderStore(d)
   }
 
+  // ── 面试录音问答（点击一行查看「问题 + 回答亮点」）──
+  // 数据来自后端抽取并落库的 offline_interviews.qa_extract（业务系统不展示，仅看板消费）。
+  function renderInterviewQa(d) {
+    state.qaRows = (d && d.interview_qa) || []
+    const box = $('qaList')
+    if (!box) return
+    if (!state.qaRows.length) {
+      box.innerHTML = '<div class="state">暂无已抽取的面试问答<small>逐字稿转写并抽取问答后在此展示</small></div>'
+      return
+    }
+    box.innerHTML = state.qaRows.map((r, i) => `
+      <button class="qa-row" type="button" data-qa="${i}">
+        <span class="qa-main">
+          <span class="qa-name">${esc(r.candidate_name)}</span>
+          <span class="qa-sub">${esc(r.job_title)} · ${esc(r.source_label)} · 面试官 ${esc(r.interviewer)} · ${esc(r.at)}</span>
+        </span>
+        <span class="qa-count">${r.question_count} 问</span>
+        <span class="qa-go" aria-hidden="true">›</span>
+      </button>`).join('')
+  }
+
+  function openQa(i) {
+    const r = state.qaRows[i]
+    if (!r) return
+    $('qaModalTitle').textContent = `面试问答 · ${r.candidate_name}`
+    $('qaModalMeta').textContent = `${r.job_title} · ${r.source_label} · 面试官 ${r.interviewer} · ${r.at}`
+    const qs = r.questions || []
+    const overall = r.overall ? `<div class="qa-overall"><b>整体表现</b>${esc(r.overall)}</div>` : ''
+    const pairs = qs.map((q, idx) => {
+      const hls = (q.highlights && q.highlights.length)
+        ? `<div class="qa-hl"><span class="qa-hl-l">回答亮点</span>${q.highlights.map((h) => `<span>${esc(h)}</span>`).join('')}</div>`
+        : ''
+      return `<div class="qa-pair">
+        <div class="qa-q"><span class="qa-i">Q${idx + 1}</span><span>${esc(q.question)}</span></div>
+        <div class="qa-a">${esc(q.answer_summary)}</div>
+        ${hls}
+      </div>`
+    }).join('')
+    $('qaModalBody').innerHTML = overall + (pairs || '<div class="state">该记录未抽取到问答</div>')
+    $('qaModal').hidden = false
+    document.body.style.overflow = 'hidden'
+  }
+
+  function closeQa() {
+    const m = $('qaModal')
+    if (m) m.hidden = true
+    document.body.style.overflow = ''
+  }
+
   function render(d) {
     state.lastPayload = d
-    renderKPI(d)
+    renderScorecard(d)
+    renderExec(d)
     renderFunnel(d)
     renderCharts(d)
     renderTeam(d)
     renderRecent(d)
     renderFeed(d)
+    renderInterviewQa(d)
 
     state.lastSuccess = new Date()
     $('updatedAt').textContent = `数据生成 ${d.generated_at.slice(5)}`
@@ -1457,6 +1702,28 @@
   })
 
   $('refreshBtn').addEventListener('click', () => load())
+
+  $('viewSeg').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-view]')
+    if (!btn) return
+    setView(btn.dataset.view)
+  })
+
+  // 面试录音问答：点行打开弹层；支持遮罩、关闭按钮、Esc 关闭
+  const qaListEl = $('qaList')
+  if (qaListEl) {
+    qaListEl.addEventListener('click', (e) => {
+      const row = e.target.closest('[data-qa]')
+      if (row) openQa(Number(row.dataset.qa))
+    })
+  }
+  const qaModalEl = $('qaModal')
+  if (qaModalEl) {
+    qaModalEl.addEventListener('click', (e) => {
+      if (e.target.closest('[data-close]')) closeQa()
+    })
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeQa() })
 
   // ── 实时通道（SSE）──────────────────────
   //

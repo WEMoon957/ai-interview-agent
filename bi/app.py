@@ -36,6 +36,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import threading
@@ -83,6 +84,230 @@ TEST_PATTERNS = ["%【联调】%", "%【演示】%", "%测试%"]
 
 # 中文时区展示
 CN_TZ = timezone(timedelta(hours=8))
+
+# ── KPI 记分卡配置（高管视图）─────────────────
+#
+# 这是 skill「Executive KPI Dashboard」框架的落地：把招聘漏斗的关键指标
+# 抽象成带「目标值 / 预警阈值 / 负责人 / 领先-滞后 / 决策规则」的记分卡。
+#
+# 配置唯一入口是同级 ``kpi_config.json``（用户可直接改，无需动代码）；
+# 这里内嵌一份相同内容的默认值，保证文件缺失/损坏时记分卡照样能算。
+# 字段语义：
+#   direction: higher=越大越好 / lower=越小越好 / null=仅展示不设目标
+#   target:    绿区阈值（达成=绿）
+#   alert:     红区阈值（higher: 低于它=红；lower: 高于它=红）；target 与 alert 之间为黄区
+#   tier:      leading=领先指标(预测) / lagging=滞后指标(结果) / context=背景参考
+
+DEFAULT_KPI_CONFIG = {
+    "title": "招聘高管 KPI 记分卡",
+    "subtitle": "笨二娘隆江猪脚饭 · 招聘漏斗健康度",
+    "kpis": [
+        {"key": "onboarded", "label": "入职到岗", "unit": "人", "type": "count",
+         "direction": "higher", "target": 8, "alert": 4, "owner": "HR 负责人", "tier": "lagging",
+         "definition": "统计窗口内状态为「已入职(onboarded)」的候选人人数，是招聘漏斗的最终结果指标。",
+         "strategic_link": "门店人力到岗的直接产出，决定业务能否按计划扩张与开业。",
+         "rules": {"green": "达成目标，维持现有招聘节奏，照常周度复盘。",
+                   "yellow": "到岗偏慢，排查 Offer 接受与入职引导环节是否卡顿。",
+                   "red": "到岗严重不足，升级至负责人，48h 内复盘渠道质量与 Offer 竞争力。"}},
+        {"key": "accept_rate", "label": "Offer 接受率", "unit": "%", "type": "rate",
+         "direction": "higher", "target": 0.85, "alert": 0.70, "owner": "HR 负责人", "tier": "lagging",
+         "definition": "按 Offer 记录：接受数（含之后转 onboarded/no_show）÷ 已决数（接受+婉拒+超期）。",
+         "strategic_link": "反映薪酬竞争力与候选人体验，直接决定「发得出」能否变成「来得了」。",
+         "rules": {"green": "竞争力健康，可适度加快发 Offer 节奏。",
+                   "yellow": "接受率走低，复盘薪酬/岗位匹配度，约谈 1-2 名待定候选人。",
+                   "red": "接受率告警，升级至负责人，48h 内出具挽留/调薪方案并复盘 Offer 设计。"}},
+        {"key": "onboard_rate", "label": "到岗率", "unit": "%", "type": "rate",
+         "direction": "higher", "target": 0.90, "alert": 0.75, "owner": "HR 负责人", "tier": "lagging",
+         "definition": "按 Offer 记录：已入职数 ÷ 已接受数（接受后未报到的计入 no_show 拖累此率）。",
+         "strategic_link": "衡量「接受」到「真正报到」的转化，暴露入职引导与到岗阻力。",
+         "rules": {"green": "入职引导顺畅，保持。",
+                   "yellow": "存在接受后未报到，回访未报到候选人，优化入职前触达。",
+                   "red": "到岗率告警，排查 no_show 成因（薪资落差/竞品截胡/入职体验），负责人介入。"}},
+        {"key": "days_to_offer", "label": "平均发 Offer 周期", "unit": "天", "type": "days",
+         "direction": "lower", "target": 14, "alert": 28, "owner": "招聘运营", "tier": "lagging",
+         "definition": "从候选人建档到发出 Offer 的平均天数（建档 → sent_at）。",
+         "strategic_link": "招聘效率的核心刻度，周期过长会提高候选人流失与竞品截胡概率。",
+         "rules": {"green": "节奏健康，保持。",
+                   "yellow": "周期偏长，排查初筛/面试排期瓶颈，缩短决策链路。",
+                   "red": "周期严重拖慢，梳理卡点（面试官排期/审批流），负责人跟进。"}},
+        {"key": "days_to_onboard", "label": "平均到岗周期", "unit": "天", "type": "days",
+         "direction": "lower", "target": 30, "alert": 60, "owner": "HR 负责人", "tier": "lagging",
+         "definition": "从候选人建档到实际入职的平均天数（建档 → onboarded_at）。",
+         "strategic_link": "端到端招聘时效，影响门店补员速度与开业计划。",
+         "rules": {"green": "端到端时效达标。",
+                   "yellow": "到岗偏慢，关注入职前空窗与材料准备耗时。",
+                   "red": "到岗时效告警，复盘从接受到报到的堵点，负责人介入。"}},
+        {"key": "ai_rate", "label": "AI 面试完成率", "unit": "%", "type": "rate",
+         "direction": "higher", "target": 0.60, "alert": 0.40, "owner": "招聘运营", "tier": "leading",
+         "definition": "窗口内建档候选人中完成 AI 面试的人数占比（ai_done ÷ created）。",
+         "strategic_link": "漏斗上游转化，预示后续能进入复试/Offer 的供给量。",
+         "rules": {"green": "上游供给充足。",
+                   "yellow": "面试邀约转化偏低，优化邀约话术与候选人触达时机。",
+                   "red": "邀约大量流失，排查链路（链接失效/体验差），负责人介入。"}},
+        {"key": "offline_rate", "label": "复试转化率", "unit": "%", "type": "rate",
+         "direction": "higher", "target": 0.70, "alert": 0.50, "owner": "招聘运营", "tier": "leading",
+         "definition": "完成线下复试人数占完成 AI 面试人数的比例（offline_done ÷ ai_done）。",
+         "strategic_link": "AI 面试到店复试的转化，预示最终可发 Offer 的优质供给。",
+         "rules": {"green": "复试转化健康。",
+                   "yellow": "复试到店率偏低，优化店长邀约与到店体验。",
+                   "red": "复试大量流失，排查到店阻力（时间/地点/激励），负责人介入。"}},
+        {"key": "candidates", "label": "候选人建档量", "unit": "人", "type": "count",
+         "direction": "higher", "target": 50, "alert": 25, "owner": "招聘运营 / 市场", "tier": "leading",
+         "definition": "窗口内新建档的候选人总数，是整条漏斗的源头水量。",
+         "strategic_link": "招聘漏斗的最大杠杆——源头水量不足，后续各环节无从谈起。",
+         "rules": {"green": "渠道供给充足。",
+                   "yellow": "建档量偏低，加大渠道投放与内推激励。",
+                   "red": "源头严重缺水，复盘渠道投放与简历获取，负责人介入。"}},
+        {"key": "active_jobs", "label": "在招岗位", "unit": "个", "type": "count",
+         "direction": None, "target": None, "alert": None, "owner": "HR 负责人", "tier": "context",
+         "definition": "当前处于启用状态的招聘岗位数，作为规模背景参考（不设目标）。",
+         "strategic_link": "招聘承载能力的背景指标，配合建档量看供需平衡。",
+         "rules": {"green": "—", "yellow": "—", "red": "—"}},
+    ],
+}
+
+KPI_CONFIG_PATH = os.path.join(BASE_DIR, "kpi_config.json")
+
+
+def _load_kpi_config() -> dict:
+    """优先读 kpi_config.json；缺失/损坏则用内建默认，保证记分卡永不崩。"""
+    try:
+        with open(KPI_CONFIG_PATH, "r", encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        if isinstance(cfg, dict) and cfg.get("kpis"):
+            return cfg
+        logger.warning("kpi_config.json 结构异常，回退内建默认配置")
+    except FileNotFoundError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("读取 kpi_config.json 失败，使用内建默认：%s", exc)
+    return DEFAULT_KPI_CONFIG
+
+
+KPI_CONFIG = _load_kpi_config()
+
+
+def _kpi_status(value, direction, target, alert) -> str:
+    """三色状态：green 达成 / yellow 黄区 / red 红区 / na 无数据。"""
+    if value is None or target is None or alert is None:
+        return "na"
+    if direction == "higher":
+        if value >= target:
+            return "green"
+        if value >= alert:
+            return "yellow"
+        return "red"
+    # lower is better
+    if value <= target:
+        return "green"
+    if value <= alert:
+        return "yellow"
+    return "red"
+
+
+def _kpi_delta(value, cfg) -> str:
+    """相对目标的可读差值文案（按类型区分百分点/绝对值/天数）。"""
+    target = cfg.get("target")
+    direction = cfg.get("direction")
+    if value is None or target is None:
+        return "暂无数据"
+    typ = cfg.get("type")
+    diff = value - target
+    if typ == "rate":
+        pts = diff * 100
+        if abs(pts) < 0.05:
+            return "持平目标"
+        return ("高 " if pts > 0 else "低 ") + f"{abs(pts):.1f}pt"
+    if typ == "days":
+        if abs(diff) < 0.05:
+            return "持平目标"
+        if diff > 0:
+            return f"慢 {diff:.1f} 天"
+        return f"快 {abs(diff):.1f} 天"
+    # count
+    if diff == 0:
+        return "持平目标"
+    return ("多 " if diff > 0 else "少 ") + f"{abs(int(diff))}{cfg.get('unit', '')}"
+
+
+def _resolve_kpi_value(key: str, kpi: dict, funnel: dict):
+    """从现有 kpi / funnel 数据里取出该 KPI 的当前值。"""
+    if key == "offline_rate":
+        ai = funnel.get("ai_done") or 0
+        return _rate(funnel.get("offline_done") or 0, ai)
+    return kpi.get(key)
+
+
+def build_scorecard(kpi: dict, funnel: dict) -> dict:
+    """依据 KPI 配置 + 当前数据，算出记分卡、高管叙事、风险预警与行动项。"""
+    cards = []
+    for cfg in KPI_CONFIG.get("kpis", []):
+        key = cfg["key"]
+        value = _resolve_kpi_value(key, kpi, funnel)
+        status = _kpi_status(value, cfg.get("direction"), cfg.get("target"), cfg.get("alert"))
+        rule = (cfg.get("rules") or {}).get(status, "")
+        variance_pct = None
+        if value is not None and cfg.get("target"):
+            try:
+                variance_pct = round((value - cfg["target"]) / cfg["target"] * 100, 1)
+            except (TypeError, ZeroDivisionError):
+                variance_pct = None
+        cards.append({
+            "key": key,
+            "label": cfg["label"],
+            "unit": cfg.get("unit"),
+            "type": cfg.get("type"),
+            "direction": cfg.get("direction"),
+            "tier": cfg.get("tier"),
+            "owner": cfg.get("owner"),
+            "value": value,
+            "target": cfg.get("target"),
+            "alert": cfg.get("alert"),
+            "status": status,
+            "delta_text": _kpi_delta(value, cfg),
+            "variance_pct": variance_pct,
+            "rule": rule,
+            "definition": cfg.get("definition", ""),
+            "strategic_link": cfg.get("strategic_link", ""),
+        })
+
+    # 高管叙事：用关键数字拼一段中文简报（数据驱动，不编故事）
+    ar = kpi.get("accept_rate")
+    orr = kpi.get("onboard_rate")
+    alerts = [c for c in cards if c["status"] in ("yellow", "red")]
+    opps = [c for c in cards if c["status"] == "green" and (c["variance_pct"] or 0) >= 10]
+    red_cnt = sum(1 for c in cards if c["status"] == "red")
+    yellow_cnt = sum(1 for c in cards if c["status"] == "yellow")
+
+    narrative = (
+        f"统计区间内新增候选人 {_int(kpi.get('candidates'))} 人，完成 AI 面试 "
+        f"{_int(kpi.get('ai_done'))} 人（完成率 {_pct(kpi.get('ai_rate'))}），"
+        f"发出 Offer {_int(kpi.get('offer_sent'))} 份，接受率 {_pct(ar)}、到岗率 {_pct(orr)}，"
+        f"实际入职 {_int(kpi.get('onboarded'))} 人，平均招聘周期 "
+        f"{kpi.get('days_to_offer') if kpi.get('days_to_offer') is not None else '—'} 天。"
+    )
+    if red_cnt:
+        narrative += f"当前有 {red_cnt} 项指标触及红色预警，需立即处置（见下方行动项）。"
+    elif yellow_cnt:
+        narrative += f"有 {yellow_cnt} 项指标处于黄色观察区，建议本周内跟进。"
+    else:
+        narrative += "各项指标均在绿色区间，招聘漏斗运转健康。"
+
+    return {
+        "title": KPI_CONFIG.get("title", "招聘高管 KPI 记分卡"),
+        "subtitle": KPI_CONFIG.get("subtitle", ""),
+        "cards": cards,
+        "narrative": narrative,
+        "alerts": [
+            {"label": c["label"], "status": c["status"], "owner": c["owner"],
+             "delta_text": c["delta_text"], "rule": c["rule"]}
+            for c in alerts
+        ],
+        "opportunities": [c["label"] for c in opps],
+        "summary": {"green": sum(1 for c in cards if c["status"] == "green"),
+                    "yellow": yellow_cnt, "red": red_cnt,
+                    "na": sum(1 for c in cards if c["status"] == "na")},
+    }
 
 
 def _normalize_dsn(url: str) -> str:
@@ -143,6 +368,16 @@ def _rate(numerator: int, denominator: int) -> float | None:
     if not denominator:
         return None
     return round(numerator / denominator, 4)
+
+
+def _pct(value: Any, digits: int = 1) -> str:
+    """把 0~1 的比率格式化成百分数字符串（仅用于中文叙事文本）。"""
+    if value is None:
+        return "—"
+    try:
+        return f"{value * 100:.{digits}f}%"
+    except (TypeError, ValueError):
+        return "—"
 
 
 # ── SQL：公共 CTE ────────────────────────────────────────────
@@ -834,6 +1069,69 @@ def _q_team_activity(conn, p) -> list[dict]:
     return out
 
 
+def _q_interview_qa(conn, p, limit: int = 50) -> list[dict]:
+    """面试录音结构化问答（面试官问题 + 候选人回答亮点）—— 明细「点击查看」用。
+
+    口径：只看**已抽取过问答**（``offline_interviews.qa_extract`` 非空）的线下复试记录。
+
+    刻意**不接 cohort 漏斗口径**：到店直招候选人不一定有 ``recruitment_summaries`` 汇总，
+    若按汇总表关联会漏掉这批人；这里独立成查询，只看「有没有抽取结果」。
+    ``scope=real`` 时同样按岗位名排除联调/演示数据。
+    """
+    sql = """
+    SELECT o.id::text                                              AS id,
+           c.name                                                  AS candidate_name,
+           j.title                                                 AS job_title,
+           o.interviewer                                           AS interviewer,
+           o.source                                                AS source,
+           coalesce(o.qa_extracted_at, o.transcript_at, o.created_at) AS at,
+           o.transcript_status                                     AS transcript_status,
+           o.qa_extract                                            AS qa_extract
+      FROM offline_interviews o
+      JOIN candidates c ON c.id = o.candidate_id
+      JOIN job_postings j ON j.id = o.job_id
+     WHERE o.qa_extract IS NOT NULL
+       AND o.qa_extract::text NOT IN ('{}', 'null', '[]')
+       AND (%(scope_all)s::boolean OR NOT (j.title LIKE ANY(%(test_patterns)s::text[])))
+     ORDER BY at DESC
+     LIMIT %(limit)s
+    """
+    out: list[dict] = []
+    for r in _rows(conn, sql, {**p, "limit": limit}):
+        qa = r["qa_extract"] if isinstance(r["qa_extract"], dict) else {}
+        raw_qs = qa.get("questions")
+        questions = raw_qs if isinstance(raw_qs, list) else []
+        at = r["at"]
+        out.append(
+            {
+                "id": r["id"],
+                "candidate_name": r["candidate_name"] or "—",
+                "job_title": r["job_title"] or "—",
+                "interviewer": (r["interviewer"] or "").strip() or "—",
+                "source": r["source"] or "",
+                "source_label": "到店直招" if r["source"] == "walk_in" else "线上投递",
+                "transcript_status": r["transcript_status"] or "",
+                "at": at.astimezone(CN_TZ).strftime("%m-%d %H:%M") if at else "",
+                "question_count": len(questions),
+                "overall": (qa.get("overall") or "").strip(),
+                "questions": [
+                    {
+                        "question": str(q.get("question") or "").strip(),
+                        "answer_summary": str(q.get("answer_summary") or "").strip(),
+                        "highlights": [
+                            str(h).strip()
+                            for h in (q.get("highlights") or [])
+                            if str(h).strip()
+                        ],
+                    }
+                    for q in questions
+                    if isinstance(q, dict)
+                ],
+            }
+        )
+    return out
+
+
 # ── 组装 ─────────────────────────────────────────────────────
 
 
@@ -865,11 +1163,31 @@ def build_dashboard(days: int, scope: str) -> dict:
         recent = _q_recent(conn, params)
         activity = _q_activity(conn, params)
         team = _q_team_activity(conn, params)
+        interview_qa = _q_interview_qa(conn, params)
 
     # 派生指标
     ai_rate = _rate(funnel["ai_done"], funnel["created"])
     accept_rate = offer_metrics["accept_rate"]
     onboard_rate = offer_metrics["onboard_rate"]
+
+    kpi_bundle = {
+        "candidates": funnel["created"],
+        "active_jobs": meta["active_jobs"],
+        "ai_done": funnel["ai_done"],
+        "ai_rate": ai_rate,
+        "screened": funnel["screened"],
+        "offline_done": funnel["offline_done"],
+        "offer_sent": offer_metrics["sent"],
+        "offer_total": offer_metrics["total"],
+        "offer_pending": offer_metrics["pending"],
+        "accept_rate": accept_rate,
+        "onboarded": funnel["onboarded"],
+        "onboard_rate": onboard_rate,
+        "no_show": offer_metrics["no_show"],
+        "days_to_offer": cycle["days_to_offer"],
+        "days_to_onboard": cycle["days_to_onboard"],
+    }
+    scorecard = build_scorecard(kpi_bundle, funnel)
 
     return {
         "generated_at": datetime.now(CN_TZ).strftime("%Y-%m-%d %H:%M:%S"),
@@ -884,23 +1202,8 @@ def build_dashboard(days: int, scope: str) -> dict:
             "active_jobs": meta["active_jobs"],
             "total_jobs": meta["total_jobs"],
         },
-        "kpi": {
-            "candidates": funnel["created"],
-            "active_jobs": meta["active_jobs"],
-            "ai_done": funnel["ai_done"],
-            "ai_rate": ai_rate,
-            "screened": funnel["screened"],
-            "offline_done": funnel["offline_done"],
-            "offer_sent": offer_metrics["sent"],
-            "offer_total": offer_metrics["total"],
-            "offer_pending": offer_metrics["pending"],
-            "accept_rate": accept_rate,
-            "onboarded": funnel["onboarded"],
-            "onboard_rate": onboard_rate,
-            "no_show": offer_metrics["no_show"],
-            "days_to_offer": cycle["days_to_offer"],
-            "days_to_onboard": cycle["days_to_onboard"],
-        },
+        "kpi": kpi_bundle,
+        "scorecard": scorecard,
         "funnel": funnel,
         "cycle": cycle,
         "offer_metrics": offer_metrics,
@@ -914,6 +1217,7 @@ def build_dashboard(days: int, scope: str) -> dict:
         "stores": stores,
         "recent": recent,
         "activity": activity,
+        "interview_qa": interview_qa,
         "team": team,
         "team_summary": {
             "total": len(team),
@@ -961,6 +1265,12 @@ def health():
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=503, content={"code": 1, "message": f"数据库不可用：{exc}"})
     return {"code": 0, "message": "ok", "data": {"status": "healthy"}}
+
+
+@app.get("/api/kpi-config")
+def api_kpi_config():
+    """返回 KPI 记分卡配置（目标值 / 阈值 / 负责人 / 口径），供前端展示指标字典与说明。"""
+    return {"code": 0, "message": "ok", "data": KPI_CONFIG}
 
 
 @app.get("/api/dashboard")
