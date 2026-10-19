@@ -134,8 +134,11 @@ class Settings(BaseSettings):
     # 私有妙记也能读，不再要求逐条「公开」；无授权时自动降级为 bot 身份
     feishu_minutes_user_token_enabled: bool = True
     # 设备授权申请的 scope（空格分隔；offline_access 用于拿 refresh_token）
+    # basic:read 是「获取妙记信息」接口（GET /minutes/{token}）的权限，缺它会报 99991679；
+    # transcript 接口只需要 transcript:export，不需要 basic:read。
     feishu_minutes_oauth_scopes: str = (
         "minutes:minutes.search:read "
+        "minutes:minutes.basic:read "
         "minutes:minutes.transcript:export "
         "offline_access"
     )
