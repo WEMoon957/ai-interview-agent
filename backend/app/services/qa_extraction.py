@@ -1,6 +1,6 @@
-"""面试逐字稿 → 结构化问答（问题 + 回答亮点）抽取。
+"""面试逐字稿 → 结构化问答（问题 + 回答摘要/关键原话/亮点）抽取。
 
-用途：把到店直招 / 线下复试的整场逐字稿拆成「面试官问了什么 + 候选人回答的要点与亮点」，
+用途：把到店直招 / 线下复试的整场逐字稿拆成「面试官问了什么 + 候选人怎么回答的」，
 落库到 ``offline_interviews.qa_extract``，供 **招聘 BI 数据看板** 点击查看；
 业务系统不做展示（故 ``_offline_out`` 不返回该字段）。
 
@@ -31,13 +31,15 @@ QA_EXTRACTION_PROMPT = """你是一名招聘面试复盘助手。下面是一段
 【整理要求】
 1. 只抽取**面试官（提问方）**提出的问题，忽略寒暄与纯过渡语；候选人自己反问的问题不算在内。
 2. 按对话先后顺序逐条列出；同一话题的多轮追问可合并为一条，question 用凝练后的问法。
-3. 每条给出候选人回答的要点摘要 answer_summary（1-2 句）。
-4. highlights 提取候选人回答里的**亮点/加分项**（如具体经验佐证、有服务意识、稳定性、主动性等），
+3. 每条给出候选人回答的要点摘要 answer_summary（1-2 句，概括「答了什么」）。
+4. answer_quotes 摘取候选人回答里的**关键原话**（1-3 句，尽量保留说话的原本措辞，不要改写或概括），
+   用于还原「候选人当时是怎么回答的」；若该条回答没有可引用的实质内容，返回空数组，不要硬编。
+5. highlights 提取候选人回答里的**亮点/加分项**（如具体经验佐证、有服务意识、稳定性、主动性等），
    0-3 条；若该回答平淡无明显亮点，可返回空数组，不要硬凑。
-5. overall 用 2-3 句概括整场问答中候选人的整体表现与最突出的亮点。
+6. overall 用 2-3 句概括整场问答中候选人的整体表现与最突出的亮点。
 
 【输出格式】只输出一个 JSON 对象，不要任何额外文字或 Markdown 代码块标记：
-{{"questions": [{{"question": "面试官的问题", "answer_summary": "候选人回答要点", "highlights": ["亮点1", "亮点2"]}}], "overall": "整场表现概述"}}"""
+{{"questions": [{{"question": "面试官的问题", "answer_summary": "候选人回答要点", "answer_quotes": ["候选人关键原话1", "候选人关键原话2"], "highlights": ["亮点1", "亮点2"]}}], "overall": "整场表现概述"}}"""
 
 
 def _parse_json_response(content: str) -> dict:
@@ -73,6 +75,12 @@ def _coerce_qa(parsed: Any) -> dict:
             q = str(item.get("question") or "").strip()
             if not q:
                 continue
+            quotes_raw = item.get("answer_quotes")
+            answer_quotes = (
+                [str(t).strip() for t in quotes_raw if str(t).strip()]
+                if isinstance(quotes_raw, list)
+                else []
+            )
             highlights_raw = item.get("highlights")
             highlights = (
                 [str(h).strip() for h in highlights_raw if str(h).strip()]
@@ -83,6 +91,7 @@ def _coerce_qa(parsed: Any) -> dict:
                 {
                     "question": q,
                     "answer_summary": str(item.get("answer_summary") or "").strip(),
+                    "answer_quotes": answer_quotes[:3],
                     "highlights": highlights[:3],
                 }
             )
@@ -96,7 +105,8 @@ def extract_interview_qa(
 ) -> dict:
     """把整场逐字稿抽取为结构化问答。
 
-    返回 ``{"questions": [{"question", "answer_summary", "highlights": [...]}], "overall": str}``。
+    返回 ``{"questions": [{"question", "answer_summary", "answer_quotes": [...],
+    "highlights": [...]}], "overall": str}``。
 
     任何 LLM 失败均降级为空结果（questions=[]），不抛异常，由调用方决定是否重试。
     """

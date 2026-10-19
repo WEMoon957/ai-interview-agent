@@ -399,6 +399,17 @@
   .qa-hl span{font-size:var(--fs-1);line-height:1.7;padding:2px 9px;border-radius:999px;
     background:rgba(52,211,153,.13);color:#6ee7b7;border:1px solid rgba(52,211,153,.28)}
   .qa-hl .qa-hl-l{background:transparent;border:0;color:var(--dim);padding:0}
+  /* 候选人原话（保留口语，用引号包住） */
+  .qa-quotes{margin:9px 0 0 22px;display:flex;flex-wrap:wrap;align-items:baseline;gap:7px 8px}
+  .qa-quotes .qa-quotes-l{flex:none;font-size:var(--fs-1);color:var(--dim)}
+  .qa-quotes span:not(.qa-quotes-l){font-size:var(--fs-2);line-height:1.7;color:#e6d9b8;
+    background:rgba(251,191,36,.07);border-left:2px solid rgba(251,191,36,.5);
+    border-radius:0 8px 8px 0;padding:3px 10px}
+  /* 候选人明细表里的「问答」入口 */
+  .qa-btn{font:inherit;font-size:var(--fs-1);line-height:1.6;padding:2px 9px;border-radius:999px;cursor:pointer;
+    white-space:nowrap;background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3);color:#fcd34d;
+    transition:background .16s,border-color .16s,color .16s}
+  .qa-btn:hover{background:rgba(251,191,36,.22);border-color:rgba(251,191,36,.55);color:#fde68a}
 
   footer{
     margin-top:16px;padding-top:12px;border-top:1px solid var(--border-soft);
@@ -707,10 +718,10 @@
             <tr>
               <th>候选人</th><th>岗位</th>
               <th class="num">初筛</th><th class="num">AI 面试</th><th class="num">线下复试</th><th class="num">最终</th>
-              <th>结论</th><th>阶段</th><th>更新时间</th>
+              <th>结论</th><th>阶段</th><th>问答</th><th>更新时间</th>
             </tr>
           </thead>
-          <tbody id="recentBody"><tr><td colspan="9"><div class="state is-loading">加载中…</div></td></tr></tbody>
+          <tbody id="recentBody"><tr><td colspan="10"><div class="state is-loading">加载中…</div></td></tr></tbody>
         </table>
       </div>
     </section>
@@ -825,6 +836,7 @@
   const STAGE_LABEL = {
     screened: '已初筛', ai_interview: 'AI 面试中', ai_done: 'AI 面试完成',
     offline_scheduled: '待线下复试', offline_done: '线下复试完成', closed: '已结束',
+    walk_in: '到店直招',   // 无简历汇总，只有线下复试记录
   }
   const VERDICT_CLASS = { '强烈推荐': 'g', '推荐': 'b', '待定': 'y', '不推荐': 'r' }
 
@@ -1334,7 +1346,7 @@
       })
     }
     if (!rows.length) {
-      body.innerHTML = `<tr><td colspan="9"><div class="state">${q
+      body.innerHTML = `<tr><td colspan="10"><div class="state">${q
         ? '没有匹配的候选人<small>换个姓名或岗位关键词试试</small>'
         : '当前口径下暂无汇总记录<small>试试切换到 90 天或「全部」</small>'}</div></td></tr>`
       return
@@ -1351,6 +1363,9 @@
         <td class="num" style="color:#e3ebfa;font-weight:600">${sc(r.final_score)}</td>
         <td>${r.verdict ? `<span class="tag ${vc}">${r.verdict}</span>` : '<span class="na">—</span>'}</td>
         <td><span class="tag n">${STAGE_LABEL[r.stage] || '其他状态'}</span></td>
+        <td>${r.has_qa
+          ? `<button class="qa-btn" type="button" data-candidate="${esc(r.candidate_id)}" title="查看该候选人的面试问答">${r.qa_count ? r.qa_count + ' 问' : '查看'}</button>`
+          : '<span class="na">—</span>'}</td>
         <td class="ts">${r.snapshot_at || '—'}</td>
       </tr>`
     }).join('')
@@ -1500,16 +1515,35 @@
     const qs = r.questions || []
     const overall = r.overall ? `<div class="qa-overall"><b>整体表现</b>${esc(r.overall)}</div>` : ''
     const pairs = qs.map((q, idx) => {
+      const quotes = (q.answer_quotes && q.answer_quotes.length)
+        ? `<div class="qa-quotes"><span class="qa-quotes-l">原话</span>${q.answer_quotes.map((t) => `<span>「${esc(t)}」</span>`).join('')}</div>`
+        : ''
       const hls = (q.highlights && q.highlights.length)
         ? `<div class="qa-hl"><span class="qa-hl-l">回答亮点</span>${q.highlights.map((h) => `<span>${esc(h)}</span>`).join('')}</div>`
         : ''
       return `<div class="qa-pair">
         <div class="qa-q"><span class="qa-i">Q${idx + 1}</span><span>${esc(q.question)}</span></div>
         <div class="qa-a">${esc(q.answer_summary)}</div>
+        ${quotes}
         ${hls}
       </div>`
     }).join('')
     $('qaModalBody').innerHTML = overall + (pairs || '<div class="state">该记录未抽取到问答</div>')
+    $('qaModal').hidden = false
+    document.body.style.overflow = 'hidden'
+  }
+
+  // 从「候选人汇总明细」点问答按钮进来：按候选人找最新一条问答记录
+  // （同一个人可能有多场线下复试，列表已按时间倒序，取第一条即最新）
+  function openQaByCandidate(cid) {
+    const i = state.qaRows.findIndex((r) => r.candidate_id === cid)
+    if (i >= 0) {
+      openQa(i)
+      return
+    }
+    $('qaModalTitle').textContent = '面试问答'
+    $('qaModalMeta').textContent = '未取到该候选人的问答记录'
+    $('qaModalBody').innerHTML = '<div class="state">暂无问答可展示<small>逐字稿转写完成后会自动抽取</small></div>'
     $('qaModal').hidden = false
     document.body.style.overflow = 'hidden'
   }
@@ -1715,6 +1749,14 @@
     qaListEl.addEventListener('click', (e) => {
       const row = e.target.closest('[data-qa]')
       if (row) openQa(Number(row.dataset.qa))
+    })
+  }
+  // 候选人汇总明细：点「问答」列按钮，直接看这个人的面试问答
+  const recentBodyEl = $('recentBody')
+  if (recentBodyEl) {
+    recentBodyEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-candidate]')
+      if (btn) openQaByCandidate(btn.dataset.candidate)
     })
   }
   const qaModalEl = $('qaModal')

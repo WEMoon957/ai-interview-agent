@@ -74,6 +74,8 @@ def _run_one(db, row: OfflineInterview) -> dict:
     for i, item in enumerate(qa.get("questions") or [], 1):
         print(f"    {i}. 问：{item.get('question')}")
         print(f"       答：{item.get('answer_summary')}")
+        if item.get("answer_quotes"):
+            print(f"       原话：{' / '.join(item['answer_quotes'])}")
         if item.get("highlights"):
             print(f"       亮点：{'；'.join(item['highlights'])}")
     if qa.get("overall"):

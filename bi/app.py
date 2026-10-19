@@ -888,7 +888,8 @@ def _q_trend(conn, p, start: datetime, days: int) -> dict:
 
 def _q_recent(conn, p, limit: int = 25) -> list[dict]:
     sql = _CTE + """
-    SELECT co.name                        AS candidate_name,
+    SELECT co.id::text                    AS candidate_id,
+           co.name                        AS candidate_name,
            j.title                        AS job_title,
            m.screening_score              AS screening_score,
            m.ai_interview_score           AS ai_score,
@@ -896,11 +897,19 @@ def _q_recent(conn, p, limit: int = 25) -> list[dict]:
            m.final_score                  AS final_score,
            m.final_verdict                AS verdict,
            m.stage                        AS stage,
-           m.snapshot_at                  AS snapshot_at
+           m.snapshot_at                  AS snapshot_at,
+           coalesce(qa.n, 0)              AS qa_count
       FROM recruitment_summaries m
       JOIN job_postings j ON j.id = m.job_id
       JOIN cohort co ON co.id = m.candidate_id
       JOIN scope_jobs sj ON sj.id = m.job_id
+      -- 该候选人已抽取的问答条数：有则可从明细直接点开「问了什么 / 怎么回答」
+      LEFT JOIN LATERAL (
+            SELECT coalesce(sum(jsonb_array_length(oi.qa_extract -> 'questions')), 0)::int AS n
+              FROM offline_interviews oi
+             WHERE oi.candidate_id = co.id
+               AND jsonb_typeof(oi.qa_extract -> 'questions') = 'array'
+      ) qa ON TRUE
      ORDER BY m.snapshot_at DESC
      LIMIT %(limit)s
     """
@@ -908,8 +917,10 @@ def _q_recent(conn, p, limit: int = 25) -> list[dict]:
     out = []
     for r in rows:
         snap = r["snapshot_at"]
+        qa_count = _int(r["qa_count"]) or 0
         out.append(
             {
+                "candidate_id": r["candidate_id"],
                 "candidate_name": r["candidate_name"],
                 "job_title": r["job_title"],
                 "screening_score": _num(r["screening_score"]),
@@ -919,9 +930,75 @@ def _q_recent(conn, p, limit: int = 25) -> list[dict]:
                 "verdict": r["verdict"] or "",
                 "stage": r["stage"] or "",
                 "snapshot_at": (snap.astimezone(CN_TZ).strftime("%m-%d %H:%M") if snap else ""),
+                "has_qa": qa_count > 0,
+                "qa_count": qa_count,
             }
         )
     return out
+
+
+def _q_walkin_qa(conn, p, limit: int = 25) -> list[dict]:
+    """到店直招（无 ``recruitment_summaries`` 汇总）但已抽取问答的候选人。
+
+    到店直招直接进线下复试，从不经过简历初筛/汇总，故在汇总明细里天然看不到，
+    这批人恰恰是妙记逐字稿的主要来源；这里按「人」聚合成与 ``_q_recent`` 同形的行，
+    合并进明细表后就能直接点开问答。
+
+    没有汇总口径的列一律留空（初筛 / AI 面试 / 最终分 / 结论），不做臆造：
+    线下复试取整场评分 ``ai_score`` 的最大值，阶段标 ``walk_in``。
+    """
+    sql = """
+    SELECT co.id::text                                              AS candidate_id,
+           co.name                                                  AS candidate_name,
+           (array_agg(j.title ORDER BY o.created_at DESC))[1]       AS job_title,
+           max(o.ai_score)                                          AS offline_score,
+           max(coalesce(o.qa_extracted_at, o.transcript_at, o.created_at)) AS snapshot_at,
+           coalesce(sum(CASE WHEN jsonb_typeof(o.qa_extract -> 'questions') = 'array'
+                             THEN jsonb_array_length(o.qa_extract -> 'questions')
+                             ELSE 0 END), 0)::int                   AS qa_count
+      FROM offline_interviews o
+      JOIN candidates co ON co.id = o.candidate_id
+      JOIN job_postings j ON j.id = o.job_id
+     WHERE jsonb_typeof(o.qa_extract -> 'questions') = 'array'
+       AND NOT EXISTS (SELECT 1 FROM recruitment_summaries m WHERE m.candidate_id = co.id)
+       AND (%(scope_all)s::boolean OR NOT (j.title LIKE ANY(%(test_patterns)s::text[])))
+     GROUP BY co.id, co.name
+     ORDER BY snapshot_at DESC
+     LIMIT %(limit)s
+    """
+    out: list[dict] = []
+    for r in _rows(conn, sql, {**p, "limit": limit}):
+        snap = r["snapshot_at"]
+        qa_count = _int(r["qa_count"]) or 0
+        out.append(
+            {
+                "candidate_id": r["candidate_id"],
+                "candidate_name": r["candidate_name"],
+                "job_title": r["job_title"] or "—",
+                "screening_score": None,
+                "ai_score": None,
+                "offline_score": _num(r["offline_score"]),
+                "final_score": None,
+                "verdict": "",
+                "stage": "walk_in",
+                "snapshot_at": (snap.astimezone(CN_TZ).strftime("%m-%d %H:%M") if snap else ""),
+                "has_qa": qa_count > 0,
+                "qa_count": qa_count,
+            }
+        )
+    return out
+
+
+def _merge_recent(summary_rows: list[dict], walkin_rows: list[dict], limit: int = 25) -> list[dict]:
+    """把汇总行与到店直招行合成一张明细表：同一候选人以汇总行为准。
+
+    排序用展示用的 ``MM-DD HH:MM`` 串降序——明细只取最近 25 条，窗口内不会跨年，
+    字符串比较等价于时间比较，无需额外带一列时间戳。
+    """
+    seen = {r["candidate_id"] for r in summary_rows}
+    rows = list(summary_rows) + [r for r in walkin_rows if r["candidate_id"] not in seen]
+    rows.sort(key=lambda r: r.get("snapshot_at") or "", reverse=True)
+    return rows[:limit]
 
 
 def _q_activity(conn, p, limit: int = 12) -> list[dict]:
@@ -1080,6 +1157,7 @@ def _q_interview_qa(conn, p, limit: int = 50) -> list[dict]:
     """
     sql = """
     SELECT o.id::text                                              AS id,
+           c.id::text                                              AS candidate_id,
            c.name                                                  AS candidate_name,
            j.title                                                 AS job_title,
            o.interviewer                                           AS interviewer,
@@ -1105,6 +1183,7 @@ def _q_interview_qa(conn, p, limit: int = 50) -> list[dict]:
         out.append(
             {
                 "id": r["id"],
+                "candidate_id": r["candidate_id"],
                 "candidate_name": r["candidate_name"] or "—",
                 "job_title": r["job_title"] or "—",
                 "interviewer": (r["interviewer"] or "").strip() or "—",
@@ -1118,6 +1197,11 @@ def _q_interview_qa(conn, p, limit: int = 50) -> list[dict]:
                     {
                         "question": str(q.get("question") or "").strip(),
                         "answer_summary": str(q.get("answer_summary") or "").strip(),
+                        "answer_quotes": [
+                            str(t).strip()
+                            for t in (q.get("answer_quotes") or [])
+                            if str(t).strip()
+                        ][:3],
                         "highlights": [
                             str(h).strip()
                             for h in (q.get("highlights") or [])
@@ -1161,9 +1245,13 @@ def build_dashboard(days: int, scope: str) -> dict:
         stores = _q_stores(conn, params)
         trend = _q_trend(conn, params, start, days)
         recent = _q_recent(conn, params)
+        recent_walkin = _q_walkin_qa(conn, params)
         activity = _q_activity(conn, params)
         team = _q_team_activity(conn, params)
         interview_qa = _q_interview_qa(conn, params)
+
+    # 到店直招没有汇总行，单独查出来合并进明细（问答列才有入口）
+    recent = _merge_recent(recent, recent_walkin)
 
     # 派生指标
     ai_rate = _rate(funnel["ai_done"], funnel["created"])

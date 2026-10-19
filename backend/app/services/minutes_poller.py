@@ -17,6 +17,7 @@ from app.db.models import InterviewTemplate, OfflineInterview
 from app.db.session import SessionLocal
 from app.services.feishu_minutes import extract_walk_in_code, get_transcript, search_minutes
 from app.services.minutes_auth import get_valid_user_token, list_authorizations
+from app.services.qa_extraction import extract_interview_qa
 from app.services.summary import auto_rebuild_summary
 from app.services.whole_interview_scoring import DEFAULT_RUBRIC, score_whole_interview
 
@@ -90,10 +91,11 @@ def _resolve_owner_token(
 def transcribe_and_score(
     db, row: OfflineInterview, settings: Settings | None = None
 ) -> bool:
-    """拉逐字稿 → 整场评分 → 落 AI 参考分。返回是否成功（转写成功即 True）。
+    """拉逐字稿 → 整场评分 → 抽取结构化问答。返回是否成功（转写成功即 True）。
 
     优先用妙记归属人的 user_access_token（可读私有妙记）；无授权时降级 bot
-    （只能读已公开妙记）。供轮询任务与手动触发接口复用（公开）。
+    （只能读已公开妙记）。评分与问答抽取各自独立降级，任一失败都不影响逐字稿落库。
+    供轮询任务与手动触发接口复用（公开）。
     """
     settings = settings or get_settings()
     owner_id, user_token = _resolve_owner_token(db, row, settings)
@@ -134,6 +136,25 @@ def transcribe_and_score(
             auto_rebuild_summary(row.job_id, notify=False)
     except Exception:  # noqa: BLE001 - 评分失败不影响转写落库
         logger.exception("整场评分异常 minute=%s", row.minutes_token)
+
+    # 结构化问答抽取（供 BI 看板「点击候选人看问了什么 / 怎么回答」）：
+    # 与评分同样独立 try，失败不阻塞；抽不到内容时不写时间戳，留待 --all 回填重试。
+    try:
+        job = row.job
+        qa = extract_interview_qa(
+            text,
+            job_title=job.title if job else "",
+            job_desc=job.jd_text if job else "",
+        )
+        if qa.get("questions"):
+            row.qa_extract = qa
+            row.qa_extracted_at = datetime.now(timezone.utc)
+            db.commit()
+        else:
+            logger.warning("面试问答抽取为空 minute=%s", row.minutes_token)
+    except Exception:  # noqa: BLE001 - 抽取失败不影响转写与评分
+        logger.exception("面试问答抽取异常 minute=%s", row.minutes_token)
+        db.rollback()
     return True
 
 
