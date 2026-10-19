@@ -185,3 +185,16 @@ export const resetAdminUserPassword = (userId, data) =>
   request.post(`/auth/users/${userId}/reset-password`, data)
 
 export const unlockAdminUser = (userId) => request.post(`/auth/users/${userId}/unlock`)
+
+// ── 妙记个人授权（设备授权流：HR 生成链接 → 本人飞书确认）────
+// 应用身份只能读「已公开」妙记；授权后用本人 user token 可读私有妙记
+export const startMinutesAuth = () =>
+  request.post('/admin/feishu-minutes/authorizations/start')
+
+export const pollMinutesAuth = (sessionId) =>
+  request.get(`/admin/feishu-minutes/authorizations/poll/${sessionId}`)
+
+export const listMinutesAuth = () => request.get('/admin/feishu-minutes/authorizations')
+
+export const revokeMinutesAuth = (openId) =>
+  request.delete(`/admin/feishu-minutes/authorizations/${openId}`)

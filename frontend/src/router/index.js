@@ -99,6 +99,13 @@ const routes = [
         meta: { title: '录用 / 入职', roles: ['admin', 'hr'] },
       },
       {
+        // 妙记个人授权：应用身份只能读公开妙记，授权后可读私有妙记
+        path: 'minutes-auth',
+        name: 'minutes-auth',
+        component: () => import('../views/admin/MinutesAuth.vue'),
+        meta: { title: '妙记授权', roles: ['admin', 'hr'] },
+      },
+      {
         // 账号管理：建号/停用/重置密码/解锁，仅管理员
         path: 'accounts',
         name: 'accounts',

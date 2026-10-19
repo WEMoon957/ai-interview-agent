@@ -130,6 +130,15 @@ class Settings(BaseSettings):
     feishu_minutes_search_window_days: int = 7
     # 店长 open_id 兜底：未解析到店长 open_id 时，轮询按此所有者搜索（先用发起人自己的 open_id 联调）
     feishu_minutes_default_owner_open_id: str = ""
+    # 妙记个人授权（user_access_token）：开启后优先用妙记 owner 的 user token 拉取，
+    # 私有妙记也能读，不再要求逐条「公开」；无授权时自动降级为 bot 身份
+    feishu_minutes_user_token_enabled: bool = True
+    # 设备授权申请的 scope（空格分隔；offline_access 用于拿 refresh_token）
+    feishu_minutes_oauth_scopes: str = (
+        "minutes:minutes.search:read "
+        "minutes:minutes.transcript:export "
+        "offline_access"
+    )
 
     # ── 长连接（卡片按钮回调）────────────────────────────
     # 开启后审批人可直接在飞书卡片上点「同意 / 驳回」完成审批。

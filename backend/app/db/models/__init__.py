@@ -5,6 +5,7 @@ from app.db.models.audit_log import AuditLog
 from app.db.models.candidate import Candidate
 from app.db.models.company import CompanyProfile
 from app.db.models.evaluation import AnswerEvaluation
+from app.db.models.feishu_minutes_auth import FeishuMinutesAuth
 from app.db.models.job import JobPosting
 from app.db.models.offline import OfflineInterview
 from app.db.models.offer import Offer
@@ -29,6 +30,8 @@ __all__ = [
     "ResumeScreening",
     "OfflineInterview",
     "RecruitmentSummary",
+    # 妙记个人授权（user_access_token，读私有妙记）
+    "FeishuMinutesAuth",
     # Offer → 入职闭环（第⑤阶段）
     "Offer",
     # 后台账号体系（安全改造：登录鉴权）

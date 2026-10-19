@@ -16,6 +16,7 @@ from app.config import Settings, get_settings
 from app.db.models import InterviewTemplate, OfflineInterview
 from app.db.session import SessionLocal
 from app.services.feishu_minutes import extract_walk_in_code, get_transcript, search_minutes
+from app.services.minutes_auth import get_valid_user_token, list_authorizations
 from app.services.whole_interview_scoring import DEFAULT_RUBRIC, score_whole_interview
 
 logger = logging.getLogger(__name__)
@@ -54,16 +55,61 @@ def _bind_minutes(db, row: OfflineInterview, item: dict) -> bool:
     return True
 
 
-def transcribe_and_score(db, row: OfflineInterview) -> bool:
+def _owner_open_id(row: OfflineInterview, settings: Settings) -> str:
+    """妙记归属人：优先记录上的店长 open_id，其次全局兜底配置。"""
+    return (
+        row.interviewer_open_id
+        or settings.feishu_minutes_default_owner_open_id
+        or ""
+    ).strip()
+
+
+def _resolve_owner_token(
+    db, row: OfflineInterview, settings: Settings
+) -> tuple[str, str | None]:
+    """解析「归属人 + 可用 user token」。
+
+    过渡期兜底：记录上没写归属人、且系统里**只有一个**有效授权时，直接用该授权
+    （典型场景：先只开 HR 一个人的通道）。多个授权时不猜，避免读错人的妙记。
+    """
+    owner_id = _owner_open_id(row, settings)
+    if owner_id:
+        token = get_valid_user_token(db, owner_id, settings)
+        if token:
+            return owner_id, token
+
+    active = [r for r in list_authorizations(db) if r.status == "active"]
+    if len(active) == 1:
+        token = get_valid_user_token(db, active[0].open_id, settings)
+        if token:
+            return active[0].open_id, token
+    return owner_id, None
+
+
+def transcribe_and_score(
+    db, row: OfflineInterview, settings: Settings | None = None
+) -> bool:
     """拉逐字稿 → 整场评分 → 落 AI 参考分。返回是否成功（转写成功即 True）。
 
-    供轮询任务与手动触发接口复用（公开）。
+    优先用妙记归属人的 user_access_token（可读私有妙记）；无授权时降级 bot
+    （只能读已公开妙记）。供轮询任务与手动触发接口复用（公开）。
     """
-    ok, text, err = get_transcript(row.minutes_token)
+    settings = settings or get_settings()
+    owner_id, user_token = _resolve_owner_token(db, row, settings)
+
+    ok, text, err = get_transcript(
+        row.minutes_token, settings=settings, access_token=user_token
+    )
     if not ok:
         row.transcript_status = "failed"
         db.commit()
-        logger.warning("拉取妙记逐字稿失败 minute=%s err=%s", row.minutes_token, err)
+        logger.warning(
+            "拉取妙记逐字稿失败 minute=%s owner=%s user_token=%s err=%s",
+            row.minutes_token,
+            owner_id or "-",
+            "yes" if user_token else "no",
+            err,
+        )
         return False
 
     now = datetime.now(timezone.utc)
@@ -98,7 +144,9 @@ def poll_minutes_once(settings: Settings | None = None) -> dict:
         now = datetime.now(timezone.utc)
         start = now - timedelta(days=max(1, int(settings.feishu_minutes_search_window_days)))
 
-        # 1) 匹配阶段：pending / failed(无 token) 的记录，按店长搜索命中
+        # 1) 匹配阶段：pending / failed(无 token) 的记录，按 6 位短码精确搜索。
+        #    飞书搜索是关键词搜索、没有全量列表接口，故用 query=<短码> 而不是空 query 遍历。
+        #    归属人若有个人授权，用其 user token（可搜私有妙记），否则降级 bot（只能搜公开）。
         pending = (
             db.query(OfflineInterview)
             .filter(
@@ -108,23 +156,32 @@ def poll_minutes_once(settings: Settings | None = None) -> dict:
             )
             .all()
         )
-        by_owner: dict[str, list[OfflineInterview]] = {}
-        for r in pending:
-            if r.interviewer_open_id:
-                by_owner.setdefault(r.interviewer_open_id, []).append(r)
-
-        for owner_id, owner_rows in by_owner.items():
-            ok, items, err = search_minutes(owner_id, start, now, settings=settings)
+        for row in pending:
+            owner_id, user_token = _resolve_owner_token(db, row, settings)
+            if not owner_id:
+                continue
+            ok, items, err = search_minutes(
+                owner_id,
+                start,
+                now,
+                settings=settings,
+                access_token=user_token,
+                query=row.walk_in_code or "",
+            )
             if not ok:
                 stats["errors"] += 1
                 logger.warning("妙记搜索失败 owner=%s err=%s", owner_id, err)
                 continue
-            code_map = {r.walk_in_code: r for r in owner_rows if r.walk_in_code}
             for item in items:
-                code = extract_walk_in_code(item.get("title") or "")
-                target = code_map.get(code)
-                if target is not None and _bind_minutes(db, target, item):
+                if extract_walk_in_code(item.get("title") or "") != row.walk_in_code:
+                    continue
+                if _bind_minutes(db, row, item):
                     stats["matched"] += 1
+                # 记录真实 owner：后续转写要用「妙记所有者本人」的 token 才能读私有妙记
+                if not row.interviewer_open_id and item.get("owner_id"):
+                    row.interviewer_open_id = item["owner_id"]
+                    db.commit()
+                break
 
         # 2) 转写 + 评分阶段：matched / failed(有 token) 的记录
         to_transcribe = (

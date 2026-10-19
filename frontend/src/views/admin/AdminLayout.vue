@@ -43,6 +43,10 @@
           <el-icon><Ticket /></el-icon>
           <span>录用 / 入职</span>
         </el-menu-item>
+        <el-menu-item v-if="canSee('minutes-auth')" index="/console/minutes-auth">
+          <el-icon><Key /></el-icon>
+          <span>妙记授权</span>
+        </el-menu-item>
         <el-menu-item v-if="canSee('accounts')" index="/console/accounts">
           <el-icon><Setting /></el-icon>
           <span>账号管理</span>
@@ -118,6 +122,7 @@ import {
   DataAnalysis,
   Document,
   Files,
+  Key,
   Odometer,
   OfficeBuilding,
   PieChart,

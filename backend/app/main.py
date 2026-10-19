@@ -6,7 +6,17 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, auth, interview, offline, offers, scores, screening, summary
+from app.api import (
+    admin,
+    auth,
+    interview,
+    minutes_auth,
+    offline,
+    offers,
+    scores,
+    screening,
+    summary,
+)
 from app.api.deps import require_role, require_user
 from app.config import get_settings
 from app.db.models.admin_user import ADMIN_ROLE, HR_ROLE
@@ -120,6 +130,8 @@ app.include_router(admin.router, dependencies=_hr_only)
 app.include_router(screening.router, dependencies=_hr_only)
 app.include_router(summary.router, dependencies=_hr_only)
 app.include_router(offers.router, dependencies=_hr_only)
+# 妙记个人授权（设备授权流）：仅 HR / 管理员可发起与查看
+app.include_router(minutes_auth.router, dependencies=_hr_only)
 # 基础数据（岗位列表）：三种角色登录后均可读 —— 店长的工作台需要岗位下拉
 app.include_router(admin.base_data_router, dependencies=_protected)
 # 线下复试：三种角色都能进（店长的核心工作台），端点级再加细粒度限制
