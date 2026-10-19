@@ -17,6 +17,7 @@ from app.db.models import InterviewTemplate, OfflineInterview
 from app.db.session import SessionLocal
 from app.services.feishu_minutes import extract_walk_in_code, get_transcript, search_minutes
 from app.services.minutes_auth import get_valid_user_token, list_authorizations
+from app.services.summary import auto_rebuild_summary
 from app.services.whole_interview_scoring import DEFAULT_RUBRIC, score_whole_interview
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,8 @@ def transcribe_and_score(
             row.ai_comment = result.get("comment") or ""
             row.ai_scored_at = datetime.now(timezone.utc)
             db.commit()
+            # AI 参考分只影响展示，不改变「全链路完成」判定 → 静默重建快照即可
+            auto_rebuild_summary(row.job_id, notify=False)
     except Exception:  # noqa: BLE001 - 评分失败不影响转写落库
         logger.exception("整场评分异常 minute=%s", row.minutes_token)
     return True

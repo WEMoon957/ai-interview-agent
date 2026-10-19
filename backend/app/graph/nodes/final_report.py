@@ -6,12 +6,13 @@
 import logging
 import uuid
 
-from app.db.models import InterviewSession, SessionReport
+from app.db.models import InterviewSession, InterviewTemplate, SessionReport
 from app.db.session import SessionLocal
 from app.graph.state import InterviewState
 from app.models.schemas import Report
 from app.services.feishu_notify import notify_report_qualified
 from app.services.scoring import aggregate_report
+from app.services.summary import auto_rebuild_summary
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +56,13 @@ def _persist_report(state: InterviewState, report: Report) -> None:
             db.add(row)
 
         session = db.get(InterviewSession, sid)
+        job_id = None
         if session is not None:
             session.status = "finished"
+            if session.template_id:
+                template = db.get(InterviewTemplate, session.template_id)
+                if template is not None:
+                    job_id = template.job_id
 
         # 达标自动推送 HR（尽力而为：失败只记日志，不影响面试收尾）
         try:
@@ -70,6 +76,11 @@ def _persist_report(state: InterviewState, report: Report) -> None:
             logger.exception("飞书 HR 通知异常，已忽略（不影响面试收尾）")
 
         db.commit()
+
+        # AI 报告是「AI 面试分」的唯一来源：提交后自动重建该岗位汇总快照，
+        # 让汇总页 / BI 看板立即反映最新面试结果（失败只记日志，不影响收尾）。
+        if job_id:
+            auto_rebuild_summary(job_id)
     finally:
         db.close()
 

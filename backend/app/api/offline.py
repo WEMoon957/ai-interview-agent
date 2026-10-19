@@ -44,6 +44,7 @@ from app.exceptions import BizError
 from app.services.audio_storage import audio_abs_path, delete_audio
 from app.services.feishu_minutes import extract_minute_token, generate_walk_in_code
 from app.services.minutes_poller import transcribe_and_score
+from app.services.summary import auto_rebuild_summary
 
 logger = logging.getLogger(__name__)
 
@@ -407,6 +408,8 @@ def score_offline_interview(
     row.status = "done"
     db.commit()
     db.refresh(row)
+    # 线下打分是全链路完成的关键一步：自动重建汇总快照（全链路完成时会幂等推 HR 复核）
+    auto_rebuild_summary(row.job_id)
     return ok(_offline_out(row))
 
 
@@ -461,6 +464,8 @@ def adopt_ai_score(offline_id: str, payload: AdoptAiScore, db: Session = Depends
     row.status = "done"
     db.commit()
     db.refresh(row)
+    # 采纳 AI 分等同于店长完成打分，同样触发汇总自动落库
+    auto_rebuild_summary(row.job_id)
     return ok(_offline_out(row))
 
 

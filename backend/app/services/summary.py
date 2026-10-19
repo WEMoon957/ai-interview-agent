@@ -7,8 +7,14 @@
 
 最终分 = 各可用阶段得分按权重加权后重新归一化（缺环节不惩罚，只对已有环节加权）；
 纯函数式聚合，便于单测。
+
+落库（``rebuild_job_summary``）同样是**唯一实现**：后台「生成 / 更新汇总落库」按钮与
+业务事件自动落库（初筛完成 / AI 报告生成 / 线下打分 / 改名）共用同一段代码，
+保证手动与自动写出的快照口径完全一致。
 """
+import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -19,10 +25,14 @@ from app.db.models import (
     InterviewTemplate,
     JobPosting,
     OfflineInterview,
+    RecruitmentSummary,
     ResumeScreening,
     SessionReport,
 )
+from app.services.feishu_notify import notify_summary_review
 from app.services.resume_screening import recommendation_from_score
+
+logger = logging.getLogger(__name__)
 
 # 阶段常量
 STAGE_SCREENED = "screened"
@@ -304,3 +314,180 @@ def _build_summary_text(row: dict[str, Any], final_score: float | None, stage: s
     head = "；".join(parts)
     tail = f"，最终加权 {final_score} 分（{STAGE_LABELS.get(stage, stage)}）" if final_score is not None else ""
     return head + tail + "。"
+
+
+def notify_item(row: RecruitmentSummary) -> dict[str, Any]:
+    """汇总行 -> 推送卡片用的精简字段。"""
+    return {
+        "candidate_name": row.candidate_name,
+        "final_score": row.final_score,
+        "final_verdict": row.final_verdict,
+        "screening_score": row.screening_score,
+        "ai_interview_score": row.ai_interview_score,
+        "offline_score": row.offline_score,
+    }
+
+
+def rebuild_job_summary(
+    db: Session,
+    job_id: uuid.UUID,
+    *,
+    notify: bool = True,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """聚合单个岗位的全链路数据并**幂等落库**（一岗位一候选人一条，存在则覆盖）。
+
+    返回 ``{"saved": 落库条数, "notify": 推送结果}``。
+
+    ``notify=True`` 时，把本次**新达成全链路完成且尚未提醒过**的候选人汇成一张卡片推送 HR
+    （``recruitment_summaries.notified_at`` 保证逐候选人只推一次，重复调用不会刷屏）；
+    自动落库路径若只想刷新快照、不想打扰 HR，传 ``notify=False``。
+    """
+    job = db.get(JobPosting, job_id)
+    if job is None:
+        return {"saved": 0, "notify": {"job_title": "", "status": "skipped", "reason": "岗位不存在"}}
+
+    stamp = now or datetime.now(timezone.utc)
+    saved = 0
+    pending_notify: list[RecruitmentSummary] = []
+
+    for r in build_summary_rows(db, job.id):
+        existing = (
+            db.query(RecruitmentSummary)
+            .filter(
+                RecruitmentSummary.job_id == job.id,
+                RecruitmentSummary.candidate_id == uuid.UUID(r["candidate_id"]),
+            )
+            .first()
+        )
+        detail = {
+            "screening_score": r["screening_score"],
+            "ai_interview_score": r["ai_interview_score"],
+            "ai_interview_verdict": r.get("ai_interview_verdict", ""),
+            "ai_interview_summary": r.get("ai_interview_summary", ""),
+            "offline_score": r["offline_score"],
+            "screening_id": r["screening_id"],
+            "session_id": r["session_id"],
+            "session_token": r["session_token"],
+            "offline_id": r["offline_id"],
+            "offline_status": r["offline_status"],
+            "offline_scheduled_at": r["offline_scheduled_at"],
+            "interviewer": r["interviewer"],
+            "stage": r["stage"],
+            "screening_status": r["screening_status"],
+            "session_status": r["session_status"],
+            "offline_source": r.get("offline_source", "online"),
+            "is_walk_in": r.get("is_walk_in", False),
+        }
+        if existing is None:
+            existing = RecruitmentSummary(job_id=job.id, candidate_id=uuid.UUID(r["candidate_id"]))
+            db.add(existing)
+        existing.candidate_name = r["candidate_name"]
+        existing.screening_score = r["screening_score"]
+        existing.ai_interview_score = r["ai_interview_score"]
+        existing.offline_score = r["offline_score"]
+        existing.final_score = r["final_score"]
+        existing.stage = r["stage"]
+        existing.final_verdict = r["final_verdict"]
+        existing.is_complete = r["is_complete"]
+        existing.summary = r["summary"]
+        existing.detail = detail
+        existing.snapshot_at = stamp
+        saved += 1
+
+        if r["is_complete"] and existing.notified_at is None:
+            pending_notify.append(existing)
+
+    db.commit()
+
+    if not notify:
+        return {
+            "saved": saved,
+            "notify": {"job_title": job.title, "status": "skipped", "reason": "调用方指定不推送（notify=false）"},
+        }
+    if not pending_notify:
+        return {
+            "saved": saved,
+            "notify": {"job_title": job.title, "status": "skipped", "reason": "无新完成待提醒的候选人"},
+        }
+
+    try:
+        res = notify_summary_review(
+            job_title=job.title,
+            items=[notify_item(row) for row in pending_notify],
+            snapshot_at=stamp.strftime("%Y-%m-%d %H:%M"),
+        )
+    except Exception:  # noqa: BLE001 - 外部依赖异常不得阻断落库
+        logger.exception("汇总复核推送异常，已忽略")
+        res = {"status": "failed", "reason": "内部异常"}
+
+    if res.get("status") == "sent":
+        for row in pending_notify:
+            row.notified_at = stamp
+        db.commit()
+
+    return {"saved": saved, "notify": {"job_title": job.title, **res}}
+
+
+def auto_rebuild_summary(job_id: Any, *, notify: bool = True) -> None:
+    """业务事件后自动重建**单个岗位**的汇总快照（尽力而为，绝不影响主流程）。
+
+    必须在调用方 ``db.commit()`` **之后**调用 —— 这里开独立会话读库，
+    读不到调用方尚未提交的改动。任何异常只记日志，不向外抛。
+    """
+    if not job_id:
+        return
+    from app.db.session import SessionLocal  # 延迟导入，避免模块级循环依赖
+
+    db = SessionLocal()
+    try:
+        result = rebuild_job_summary(db, uuid.UUID(str(job_id)), notify=notify)
+        logger.info(
+            "自动汇总落库 job=%s saved=%s notify=%s",
+            job_id,
+            result.get("saved"),
+            (result.get("notify") or {}).get("status"),
+        )
+    except Exception:  # noqa: BLE001 - 自动落库失败不得影响业务
+        db.rollback()
+        logger.exception("自动汇总落库失败 job=%s（已忽略，不影响主流程）", job_id)
+    finally:
+        db.close()
+
+
+def auto_rebuild_for_candidate(candidate_id: Any, *, notify: bool = False) -> None:
+    """候选人维度触发（改名 / 建档等）：重建该候选人涉及的**全部岗位**快照。
+
+    改名只改展示名，不应触发 HR 复核推送，因此默认 ``notify=False``。
+    """
+    if not candidate_id:
+        return
+    from app.db.session import SessionLocal  # 延迟导入，避免模块级循环依赖
+
+    cid = uuid.UUID(str(candidate_id))
+    db = SessionLocal()
+    try:
+        job_ids: set[uuid.UUID] = set()
+        job_ids.update(
+            jid for (jid,) in db.query(ResumeScreening.job_id).filter(ResumeScreening.candidate_id == cid).all()
+        )
+        job_ids.update(
+            jid
+            for (jid,) in (
+                db.query(InterviewTemplate.job_id)
+                .join(InterviewSession, InterviewSession.template_id == InterviewTemplate.id)
+                .filter(InterviewSession.candidate_id == cid)
+                .all()
+            )
+        )
+        job_ids.update(
+            jid for (jid,) in db.query(OfflineInterview.job_id).filter(OfflineInterview.candidate_id == cid).all()
+        )
+        for jid in job_ids:
+            rebuild_job_summary(db, jid, notify=notify)
+        logger.info("候选人汇总自动重建 candidate=%s jobs=%s", candidate_id, len(job_ids))
+    except Exception:  # noqa: BLE001 - 自动落库失败不得影响业务
+        db.rollback()
+        logger.exception("候选人汇总自动重建失败 candidate=%s（已忽略）", candidate_id)
+    finally:
+        db.close()

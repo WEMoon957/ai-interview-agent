@@ -34,6 +34,7 @@ from app.services.company_profile import snapshot_company_profile
 from app.services.feishu_notify import notify_interview_created, notify_screening_recommendations
 from app.services.resume_parser import extract_candidate_name, parse_resume
 from app.services.resume_screening import recommendation_from_score, screen_resume
+from app.services.summary import auto_rebuild_summary
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +221,10 @@ async def upload_and_screen(
             failed += 1
             errors.append({"file_name": filename, "error": str(exc)})
             logger.exception("简历处理失败：%s", filename)
+
+    # 本批入库改变了该岗位的候选人链路（新增初筛分 / 直通会话），自动重建汇总快照，
+    # 让「数据汇总」与 BI 看板无需人工点「生成 / 更新汇总落库」即可看到新候选人。
+    auto_rebuild_summary(jid)
 
     items = (
         db.query(ResumeScreening)

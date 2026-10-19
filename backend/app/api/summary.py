@@ -16,7 +16,7 @@ from app.api.deps import get_db, ok
 from app.db.models import JobPosting, RecruitmentSummary
 from app.exceptions import BizError
 from app.services.feishu_notify import notify_summary_review
-from app.services.summary import build_summary_rows
+from app.services.summary import build_summary_rows, notify_item, rebuild_job_summary
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,9 @@ def rebuild_summary(
     落库后，若 ``notify=true``，把**本次新达成全链路完成、且尚未提醒过**的候选人
     汇成一张卡片推送给 HR（提醒复核并办理 offer 发放 / 入职）。逐候选人幂等
     （``recruitment_summaries.notified_at``），重复点击不会重复刷屏。
+
+    实现委托 ``services.summary.rebuild_job_summary``：与业务事件触发的自动落库
+    共用同一段代码，避免手动/自动两条路径口径漂移。
     """
     jobs = (
         [db.get(JobPosting, _parse_uuid(job_id, "job_id"))]
@@ -110,103 +113,11 @@ def rebuild_summary(
     for job in jobs:
         if job is None:
             continue
-        # 本次待提醒的候选人（新达成完成 + 尚未提醒过）
-        pending_notify: list[RecruitmentSummary] = []
-
-        for r in build_summary_rows(db, job.id):
-            existing = (
-                db.query(RecruitmentSummary)
-                .filter(
-                    RecruitmentSummary.job_id == job.id,
-                    RecruitmentSummary.candidate_id == uuid.UUID(r["candidate_id"]),
-                )
-                .first()
-            )
-            detail = {
-                "screening_score": r["screening_score"],
-                "ai_interview_score": r["ai_interview_score"],
-                "ai_interview_verdict": r.get("ai_interview_verdict", ""),
-                "ai_interview_summary": r.get("ai_interview_summary", ""),
-                "offline_score": r["offline_score"],
-                "screening_id": r["screening_id"],
-                "session_id": r["session_id"],
-                "session_token": r["session_token"],
-                "offline_id": r["offline_id"],
-                "offline_status": r["offline_status"],
-                "offline_scheduled_at": r["offline_scheduled_at"],
-                "interviewer": r["interviewer"],
-                "stage": r["stage"],
-                "screening_status": r["screening_status"],
-                "session_status": r["session_status"],
-                "offline_source": r.get("offline_source", "online"),
-                "is_walk_in": r.get("is_walk_in", False),
-            }
-            if existing is None:
-                existing = RecruitmentSummary(
-                    job_id=job.id,
-                    candidate_id=uuid.UUID(r["candidate_id"]),
-                )
-                db.add(existing)
-            existing.candidate_name = r["candidate_name"]
-            existing.screening_score = r["screening_score"]
-            existing.ai_interview_score = r["ai_interview_score"]
-            existing.offline_score = r["offline_score"]
-            existing.final_score = r["final_score"]
-            existing.stage = r["stage"]
-            existing.final_verdict = r["final_verdict"]
-            existing.is_complete = r["is_complete"]
-            existing.summary = r["summary"]
-            existing.detail = detail
-            existing.snapshot_at = now
-            saved += 1
-
-            if r["is_complete"] and existing.notified_at is None:
-                pending_notify.append(existing)
-
-        db.commit()
-
-        # 汇总完成提醒 HR（尽力而为：失败只记日志，不影响落库结果）
-        if not notify:
-            notify_results.append(
-                {"job_title": job.title, "status": "skipped", "reason": "调用方指定不推送（notify=false）"}
-            )
-        elif pending_notify:
-            items = [_notify_item(row) for row in pending_notify]
-            try:
-                res = notify_summary_review(
-                    job_title=job.title,
-                    items=items,
-                    snapshot_at=now.strftime("%Y-%m-%d %H:%M"),
-                )
-                logger.info("汇总复核推送结果（%s）：%s", job.title, res)
-            except Exception:  # noqa: BLE001 - 外部依赖异常不得阻断落库
-                logger.exception("汇总复核推送异常，已忽略")
-                res = {"status": "failed", "reason": "内部异常"}
-
-            if res.get("status") == "sent":
-                for row in pending_notify:
-                    row.notified_at = now
-                db.commit()
-
-            notify_results.append({"job_title": job.title, **res})
-        elif notify:
-            notify_results.append(
-                {"job_title": job.title, "status": "skipped", "reason": "无新完成待提醒的候选人"}
-            )
+        result = rebuild_job_summary(db, job.id, notify=notify, now=now)
+        saved += result["saved"]
+        notify_results.append(result["notify"])
 
     return ok({"saved": saved, "jobs": len(jobs), "notify": notify_results})
-
-
-def _notify_item(row: RecruitmentSummary) -> dict:
-    """汇总行 -> 推送卡片用的精简字段。"""
-    return {
-        "candidate_name": row.candidate_name,
-        "final_score": row.final_score,
-        "final_verdict": row.final_verdict,
-        "screening_score": row.screening_score,
-        "ai_interview_score": row.ai_interview_score,
-        "offline_score": row.offline_score,
-    }
 
 
 @router.post("/summary/notify")
@@ -232,7 +143,7 @@ def notify_summary(
         job = db.get(JobPosting, jid)
         res = notify_summary_review(
             job_title=job.title if job else "",
-            items=[_notify_item(r) for r in job_rows],
+            items=[notify_item(r) for r in job_rows],
             snapshot_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
         )
         if res.get("status") == "sent":
