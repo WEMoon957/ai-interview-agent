@@ -59,5 +59,21 @@ class RecruitmentSummary(TimestampMixin, Base):
     # 汇总复核提醒推送到 HR 的时间；NULL 表示尚未提醒（逐候选人幂等标记）
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # ── 终试闸门（老板拍板）─────────────────────────────────
+    # 候选人在线下复试完成后，汇总自动进入「待终试」(pending_final)，
+    # 老板在「老板操作台」点 通过/不通过；只有 passed_final 才允许 HR 发起 Offer。
+    # none=历史/未进入终试流程（兼容老数据，允许发 Offer）；
+    # pending_final=等老板拍板；passed_final=终试通过；failed_final=终试未通过。
+    final_interview_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="none", index=True
+    )
+    final_interview_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    final_interview_decided_by: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=""
+    )
+    final_interview_decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     candidate = relationship("Candidate", lazy="selectin")
     job = relationship("JobPosting", lazy="selectin")

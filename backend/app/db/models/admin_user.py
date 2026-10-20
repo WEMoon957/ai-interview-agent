@@ -15,7 +15,9 @@ from app.db.base import Base, TimestampMixin
 ADMIN_ROLE = "admin"
 HR_ROLE = "hr"
 STORE_MANAGER_ROLE = "store_manager"
-VALID_ROLES = (ADMIN_ROLE, HR_ROLE, STORE_MANAGER_ROLE)
+# 老板：仅做终试决策与录用审批，看不到简历/初筛/账号等敏感模块
+BOSS_ROLE = "boss"
+VALID_ROLES = (ADMIN_ROLE, HR_ROLE, STORE_MANAGER_ROLE, BOSS_ROLE)
 
 
 class AdminUser(TimestampMixin, Base):

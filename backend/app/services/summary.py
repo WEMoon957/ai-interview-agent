@@ -30,6 +30,7 @@ from app.db.models import (
     SessionReport,
 )
 from app.services.feishu_notify import notify_summary_review
+from app.services.final_interview import mark_pending_final_if_complete
 from app.services.resume_screening import recommendation_from_score
 
 logger = logging.getLogger(__name__)
@@ -390,6 +391,8 @@ def rebuild_job_summary(
         existing.stage = r["stage"]
         existing.final_verdict = r["final_verdict"]
         existing.is_complete = r["is_complete"]
+        # 候选人才刚走完全链路（此前未进入终试流程）→ 自动进入「待终试」，等老板拍板
+        mark_pending_final_if_complete(existing)
         existing.summary = r["summary"]
         existing.detail = detail
         existing.snapshot_at = stamp

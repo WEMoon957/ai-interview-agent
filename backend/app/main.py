@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import (
     admin,
     auth,
+    final_interview,
     interview,
     minutes_auth,
     offline,
@@ -19,7 +20,7 @@ from app.api import (
 )
 from app.api.deps import require_role, require_user
 from app.config import get_settings
-from app.db.models.admin_user import ADMIN_ROLE, HR_ROLE
+from app.db.models.admin_user import ADMIN_ROLE, BOSS_ROLE, HR_ROLE
 from app.exceptions import register_exception_handlers
 from app.middleware.security import AdminWriteAuditMiddleware, SecurityHeadersMiddleware
 from app.services.feishu_longconn import diagnose_longconn, start_long_connection
@@ -129,9 +130,19 @@ _hr_only = [Depends(require_user), Depends(require_role(ADMIN_ROLE, HR_ROLE))]
 app.include_router(admin.router, dependencies=_hr_only)
 app.include_router(screening.router, dependencies=_hr_only)
 app.include_router(summary.router, dependencies=_hr_only)
-app.include_router(offers.router, dependencies=_hr_only)
+# Offer 路由：老板需在操作台查看待审批 Offer 并做录用审批，故放开给 boss；
+# 其余 HR 专属动作（起草/提交/撤回/入职等）老板虽可见但不影响「只做最后操作」的体验定位
+app.include_router(
+    offers.router,
+    dependencies=[Depends(require_user), Depends(require_role(ADMIN_ROLE, HR_ROLE, BOSS_ROLE))],
+)
 # 妙记个人授权（设备授权流）：仅 HR / 管理员可发起与查看
 app.include_router(minutes_auth.router, dependencies=_hr_only)
+# 终试决策（老板操作台）：admin / boss 均可操作，老板的最后拍板环节
+app.include_router(
+    final_interview.router,
+    dependencies=[Depends(require_user), Depends(require_role(ADMIN_ROLE, BOSS_ROLE))],
+)
 # 基础数据（岗位列表）：三种角色登录后均可读 —— 店长的工作台需要岗位下拉
 app.include_router(admin.base_data_router, dependencies=_protected)
 # 线下复试：三种角色都能进（店长的核心工作台），端点级再加细粒度限制

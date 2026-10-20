@@ -53,6 +53,7 @@ def _summary_out(row: RecruitmentSummary) -> dict:
         "stage": row.stage,
         "final_verdict": row.final_verdict,
         "is_complete": row.is_complete,
+        "final_interview_status": row.final_interview_status,
         "is_walk_in": is_walk_in,
         "offline_source": detail.get("offline_source") or ("walk_in" if is_walk_in else "online"),
         "summary": row.summary,

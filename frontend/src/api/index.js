@@ -121,6 +121,19 @@ export const notifySummary = (params) => request.post('/admin/summary/notify', n
 export const listSummarySnapshots = (params) =>
   request.get('/admin/summary/snapshots', { params })
 
+// ── 终试闸门（老板操作台核心）────────────────────────
+// 列出待老板终试决策的候选人（状态 pending_final）
+export const listPendingFinal = (params) =>
+  request.get('/admin/recruitment-summaries/final-pending', { params })
+
+// 老板做终试决策：decision = 'pass'（通过）/ 'fail'（不通过），note 选填
+export const decideFinalInterview = (id, data) =>
+  request.post(`/admin/recruitment-summaries/${id}/final-decision`, data)
+
+// 终试面试档案：候选人此前各环节的评分维度 + 优点 / 风险 / 待确认问题
+export const getInterviewBrief = (id) =>
+  request.get(`/admin/recruitment-summaries/${id}/brief`)
+
 // ── Offer / 入职闭环（第⑤阶段）──────────────────────
 export const listOffers = (params) => request.get('/admin/offers', { params })
 

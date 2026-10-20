@@ -116,6 +116,7 @@
           <el-radio-group v-model="createForm.role">
             <el-radio value="hr">HR（全部业务功能）</el-radio>
             <el-radio value="store_manager">店长（仅线下复试）</el-radio>
+            <el-radio value="boss">老板（终试决策 + 录用审批）</el-radio>
             <el-radio value="admin">管理员（含账号管理）</el-radio>
           </el-radio-group>
         </el-form-item>
@@ -207,6 +208,7 @@ const ROLE_MAP = {
   admin: { label: '管理员', type: 'warning' },
   hr: { label: 'HR', type: 'info' },
   store_manager: { label: '店长', type: 'success' },
+  boss: { label: '老板', type: 'danger' },
 }
 const roleTag = (role) => ROLE_MAP[role] || { label: role, type: 'info' }
 

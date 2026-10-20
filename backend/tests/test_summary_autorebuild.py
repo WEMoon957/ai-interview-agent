@@ -129,7 +129,14 @@ def test_rebuild_updates_existing_snapshot_idempotently(monkeypatch):
     """已有快照：原地覆盖，不新增行（幂等）。"""
     job = _job()
     cid = uuid.uuid4()
-    existing = SimpleNamespace(notified_at=None, job_id=job.id, candidate_id=cid)
+    existing = SimpleNamespace(
+        notified_at=None,
+        job_id=job.id,
+        candidate_id=cid,
+        # 终试闸门字段：历史快照默认为 none（未进入终试流程）
+        final_interview_status="none",
+        is_complete=True,
+    )
     db = _FakeDB(job=job, existing=existing)
     monkeypatch.setattr(svc, "build_summary_rows", lambda _db, _jid: [_row(cid, final_score=88.0)])
 
@@ -145,7 +152,14 @@ def test_rebuild_notify_sends_once_for_new_completed(monkeypatch):
     """新完成且未提醒：推送一次，成功后写 notified_at。"""
     job = _job()
     cid = uuid.uuid4()
-    existing = SimpleNamespace(notified_at=None, job_id=job.id, candidate_id=cid)
+    existing = SimpleNamespace(
+        notified_at=None,
+        job_id=job.id,
+        candidate_id=cid,
+        # 终试闸门字段：历史快照默认为 none（未进入终试流程）
+        final_interview_status="none",
+        is_complete=True,
+    )
     db = _FakeDB(job=job, existing=existing)
     calls = []
 
@@ -169,7 +183,13 @@ def test_rebuild_notify_skipped_when_already_notified(monkeypatch):
     """已提醒过：不再重复推送（幂等），避免重复刷屏。"""
     job = _job()
     cid = uuid.uuid4()
-    existing = SimpleNamespace(notified_at=object(), job_id=job.id, candidate_id=cid)
+    existing = SimpleNamespace(
+        notified_at=object(),
+        job_id=job.id,
+        candidate_id=cid,
+        final_interview_status="none",
+        is_complete=True,
+    )
     db = _FakeDB(job=job, existing=existing)
     monkeypatch.setattr(svc, "build_summary_rows", lambda _db, _jid: [_row(cid)])
     monkeypatch.setattr(svc, "notify_summary_review", lambda **_kw: pytest.fail("不应重复推送"))
@@ -183,7 +203,14 @@ def test_rebuild_notify_failure_does_not_break_persist(monkeypatch):
     """飞书推送异常：落库照常成功，异常不外抛。"""
     job = _job()
     cid = uuid.uuid4()
-    existing = SimpleNamespace(notified_at=None, job_id=job.id, candidate_id=cid)
+    existing = SimpleNamespace(
+        notified_at=None,
+        job_id=job.id,
+        candidate_id=cid,
+        # 终试闸门字段：历史快照默认为 none（未进入终试流程）
+        final_interview_status="none",
+        is_complete=True,
+    )
     db = _FakeDB(job=job, existing=existing)
     monkeypatch.setattr(svc, "build_summary_rows", lambda _db, _jid: [_row(cid)])
 

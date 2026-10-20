@@ -155,6 +155,8 @@ def _summary(**kw) -> SimpleNamespace:
         candidate_name="张三",
         final_score=80.0,
         is_complete=True,
+        # 终试闸门：none=历史数据（未进入终试流程），允许直接发起 Offer
+        final_interview_status="none",
     )
     base.update(kw)
     return SimpleNamespace(**base)

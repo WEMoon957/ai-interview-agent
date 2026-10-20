@@ -99,6 +99,13 @@ const routes = [
         meta: { title: '录用 / 入职', roles: ['admin', 'hr'] },
       },
       {
+        // 老板操作台：终试决策 + 录用审批，老板的最后拍板环节
+        path: 'boss',
+        name: 'boss',
+        component: () => import('../views/admin/BossConsole.vue'),
+        meta: { title: '老板操作台', roles: ['admin', 'boss'] },
+      },
+      {
         // 妙记个人授权：应用身份只能读公开妙记，授权后可读私有妙记
         path: 'minutes-auth',
         name: 'minutes-auth',
@@ -139,14 +146,27 @@ router.beforeEach(async (to) => {
     // 角色不符：送到该角色能看的第一个页面，而不是把人挡在门外
     const allowed = to.meta?.roles
     if (allowed && !allowed.includes(auth.user?.role)) {
-      const home = auth.user?.role === 'store_manager' ? '/console/offline' : '/console/dashboard'
+      const role = auth.user?.role
+      const home =
+        role === 'boss'
+          ? '/console/boss'
+          : role === 'store_manager'
+            ? '/console/offline'
+            : '/console/dashboard'
       return { path: home }
     }
   }
 
-  // 已登录用户访问登录页时直接送进后台（店长送线下复试，其余送概览）
+  // 已登录用户访问登录页时直接送进后台（老板送操作台，店长送线下复试，其余送概览）
   if (to.name === 'login' && auth.isLoggedIn) {
-    return { path: auth.user?.role === 'store_manager' ? '/console/offline' : '/console/dashboard' }
+    const role = auth.user?.role
+    const home =
+      role === 'boss'
+        ? '/console/boss'
+        : role === 'store_manager'
+          ? '/console/offline'
+          : '/console/dashboard'
+    return { path: home }
   }
 
   return true

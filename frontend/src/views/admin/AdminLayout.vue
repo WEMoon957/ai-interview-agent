@@ -27,9 +27,13 @@
           <el-icon><User /></el-icon>
           <span>AI 面试记录</span>
         </el-menu-item>
-        <el-menu-item index="/console/offline">
+        <el-menu-item v-if="canSee('offline')" index="/console/offline">
           <el-icon><OfficeBuilding /></el-icon>
           <span>线下复试</span>
+        </el-menu-item>
+        <el-menu-item v-if="canSee('boss')" index="/console/boss">
+          <el-icon><Trophy /></el-icon>
+          <span>老板操作台</span>
         </el-menu-item>
         <el-menu-item v-if="canSee('reports')" index="/console/reports">
           <el-icon><DataAnalysis /></el-icon>
@@ -63,6 +67,7 @@
             <el-icon><UserFilled /></el-icon>
             <span>{{ auth.displayName }}</span>
             <el-tag v-if="auth.isAdmin" size="small" type="warning" effect="plain">管理员</el-tag>
+            <el-tag v-else-if="auth.user?.role === 'boss'" size="small" type="danger" effect="plain">老板</el-tag>
             <el-tag v-else-if="auth.user?.role === 'store_manager'" size="small" type="success" effect="plain">店长</el-tag>
             <el-tag v-else size="small" type="info" effect="plain">HR</el-tag>
             <el-icon><ArrowDown /></el-icon>
@@ -129,6 +134,7 @@ import {
   Reading,
   Setting,
   Ticket,
+  Trophy,
   User,
   UserFilled,
 } from '@element-plus/icons-vue'

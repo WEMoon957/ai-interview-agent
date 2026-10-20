@@ -307,6 +307,28 @@ def create_offer(
     if not summary.is_complete:
         raise BizError(422, "该候选人尚未走完全链路，无法发起 Offer", http_status=422)
 
+    # 终试闸门：老板尚未拍板（或已否掉）的候选人，HR 不得发起 Offer
+    from app.services.final_interview import (
+        FINAL_FAILED,
+        FINAL_PASSED,
+        FINAL_PENDING,
+        final_label,
+    )
+
+    if summary.final_interview_status == FINAL_PENDING:
+        raise BizError(
+            422,
+            "该候选人终试尚未通过（待老板拍板），暂不能发起 Offer",
+            http_status=422,
+        )
+    if summary.final_interview_status == FINAL_FAILED:
+        raise BizError(
+            422,
+            f"该候选人终试未通过（{final_label(FINAL_FAILED)}），不能发起 Offer",
+            http_status=422,
+        )
+    # FINAL_NONE（历史/未进入终试流程）与 FINAL_PASSED 均放行
+
     final_score = summary.final_score
     if final_score is None or float(final_score) < float(s.offer_min_final_score):
         raise BizError(
