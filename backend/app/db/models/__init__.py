@@ -15,6 +15,7 @@ from app.db.models.screening import ResumeScreening
 from app.db.models.session import InterviewSession
 from app.db.models.summary import RecruitmentSummary
 from app.db.models.template import InterviewTemplate
+from app.db.models.turn import InterviewTurn
 
 __all__ = [
     "JobPosting",
@@ -24,6 +25,8 @@ __all__ = [
     "InterviewSession",
     "AnswerEvaluation",
     "SessionReport",
+    # 面试逐轮问答原话（候选人原话唯一事实源，报告页证据链）
+    "InterviewTurn",
     # 公司文化档案（单例，一段公司介绍文字）
     "CompanyProfile",
     # 招聘全链路（本轮新增）

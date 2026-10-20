@@ -17,6 +17,7 @@ from app.db.models import (
     Candidate,
     InterviewSession,
     InterviewTemplate,
+    InterviewTurn,
     JobPosting,
     OfflineInterview,
     RecruitmentSummary,
@@ -57,6 +58,9 @@ def purge_candidate(db: Session, candidate_id: uuid.UUID) -> None:
         )
     ]
     if session_ids:
+        db.query(InterviewTurn).filter(
+            InterviewTurn.session_id.in_(session_ids)
+        ).delete(synchronize_session=False)
         db.query(AnswerEvaluation).filter(
             AnswerEvaluation.session_id.in_(session_ids)
         ).delete(synchronize_session=False)

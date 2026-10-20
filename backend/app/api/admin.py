@@ -19,6 +19,7 @@ from app.db.models import (
     CompanyProfile,
     InterviewSession,
     InterviewTemplate,
+    InterviewTurn,
     JobPosting,
     Resume,
     SessionReport,
@@ -28,6 +29,7 @@ from app.services.cascade import purge_candidate, purge_job, purge_template
 logger = logging.getLogger(__name__)
 from app.services.company_profile import get_active_profile, save_profile, snapshot_company_profile
 from app.services.feishu_notify import notify_interview_created
+from app.services.interview_turns import align_evaluations, list_turns
 from app.services.resume_parser import parse_resume
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -59,6 +61,9 @@ def _delete_session_cascade(db: Session, session_id: uuid.UUID) -> None:
         return
 
     # 异常数据兜底：会话没有候选人时，只删该会话自身相关数据
+    db.query(InterviewTurn).filter(InterviewTurn.session_id == session_id).delete(
+        synchronize_session=False
+    )
     db.query(AnswerEvaluation).filter(AnswerEvaluation.session_id == session_id).delete(
         synchronize_session=False
     )
@@ -414,7 +419,12 @@ def list_sessions(
 
 @router.get("/sessions/{session_id}/report")
 def get_report(session_id: uuid.UUID, db: Session = Depends(get_db)):
-    """获取面试报告 + 逐题评分明细。"""
+    """获取面试报告 + 逐题评分明细 + 候选人逐轮原话。
+
+    ``turns`` 是「AI 提问原文 + 候选人回答原文」的完整对话记录，按发生顺序排列，
+    每条内嵌对齐到的评分（``evaluation``，可能为 null）；改造前的历史会话没有原话，
+    ``turns`` 返回空数组，前端回退为仅展示评分明细。
+    """
     sess = db.get(InterviewSession, session_id)
     if sess is None:
         raise BizError(404, "会话不存在", http_status=404)
@@ -427,6 +437,9 @@ def get_report(session_id: uuid.UUID, db: Session = Depends(get_db)):
         .all()
     )
 
+    turns = list_turns(db, sess.id)
+    eval_by_turn = align_evaluations(turns, evaluations)
+
     return ok(
         {
             "session_id": str(sess.id),
@@ -437,6 +450,20 @@ def get_report(session_id: uuid.UUID, db: Session = Depends(get_db)):
                 "verdict": report.verdict if report else None,
                 "summary": report.summary if report else None,
             },
+            # 完整对话：原话是唯一事实源，评分只是挂在每轮上的派生结果
+            "turns": [
+                {
+                    "turn_index": t.turn_index,
+                    "question_id": t.question_id,
+                    "question_type": t.question_type,
+                    "is_follow_up": t.is_follow_up,
+                    "question": t.question_text,
+                    "answer": t.answer_text,
+                    "answered_at": t.created_at.isoformat() if t.created_at else None,
+                    "evaluation": eval_by_turn.get(t.turn_index),
+                }
+                for t in turns
+            ],
             "evaluations": [
                 {
                     "question_id": e.question_id,

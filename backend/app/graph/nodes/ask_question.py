@@ -5,6 +5,7 @@ from langgraph.types import interrupt
 from app.exceptions import BizError
 from app.graph.route import should_follow_up
 from app.graph.state import InterviewState
+from app.services.interview_turns import record_turn
 
 
 def ask_question(state: InterviewState) -> dict:
@@ -70,6 +71,22 @@ def ask_question(state: InterviewState) -> dict:
         "follow_up_count": follow_up_count,
     }
     answer = interrupt(payload)
+
+    # 原话落库（旁路，失败不阻断面试）：把「本轮提问 + 候选人回答」逐字写进 interview_turns。
+    # turn_index 由「已答轮数 + 1」推导 —— messages 里每条 HumanMessage 即一轮作答，
+    # 开场白是 AIMessage 不计入；唯一约束 (session_id, turn_index) 保证断点恢复重放时幂等。
+    answered = sum(
+        1 for m in (state.get("messages") or []) if isinstance(m, HumanMessage)
+    )
+    record_turn(
+        session_id=state.get("session_id"),
+        turn_index=answered + 1,
+        question_id=question_id,
+        question_type=question_type,
+        is_follow_up=q_type == "follow_up",
+        question_text=question_text,
+        answer_text=str(answer or ""),
+    )
 
     # 恢复后：把「AI 问题 + 用户回答」写入 messages，并提交进度计数
     return {

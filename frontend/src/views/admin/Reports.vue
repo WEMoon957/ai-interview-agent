@@ -71,15 +71,100 @@
           style="margin-top: 20px"
         />
 
-        <!-- 逐题评分明细 -->
-        <el-divider content-position="left">逐题评分明细</el-divider>
-        <el-collapse>
+        <!-- 完整对话与评分：原话是事实源，评分挂在每一轮上 -->
+        <el-divider content-position="left">
+          完整对话与评分
+          <span v-if="turns.length" class="turn-meta">
+            共 {{ turns.length }} 轮 · 候选人原话 {{ answerCharCount }} 字
+          </span>
+        </el-divider>
+
+        <el-alert
+          v-if="!turns.length"
+          title="该场面试早于「原话留存」上线，没有候选人原话记录，下方仅展示评分明细"
+          type="warning"
+          :closable="false"
+          style="margin-bottom: 12px"
+        />
+
+        <el-collapse v-if="turns.length">
+          <el-collapse-item
+            v-for="t in turns"
+            :key="t.turn_index"
+            :name="String(t.turn_index)"
+          >
+            <template #title>
+              <span class="turn-title">
+                <el-tag
+                  size="small"
+                  :type="t.is_follow_up ? 'warning' : 'info'"
+                  effect="plain"
+                >
+                  {{ t.is_follow_up ? '追问' : `第 ${t.turn_index} 轮` }}
+                </el-tag>
+                <span class="turn-question">{{ t.question }}</span>
+              </span>
+            </template>
+
+            <div class="qa-block">
+              <div class="qa-label">面试官提问</div>
+              <div class="qa-question">{{ t.question }}</div>
+            </div>
+
+            <div class="qa-block">
+              <div class="qa-label">
+                候选人原话
+                <span class="qa-count">{{ (t.answer || '').length }} 字</span>
+              </div>
+              <div class="qa-answer">{{ t.answer || '（未作答）' }}</div>
+            </div>
+
+            <el-descriptions
+              v-if="t.evaluation"
+              :column="1"
+              border
+              size="small"
+              label-width="88px"
+              style="margin-top: 12px"
+            >
+              <el-descriptions-item label="评分">
+                <el-tag
+                  v-for="(v, k) in t.evaluation.scores"
+                  :key="k"
+                  size="small"
+                  style="margin-right: 6px"
+                >
+                  {{ dimName(k) }}: {{ v }}
+                </el-tag>
+                <span v-if="!Object.keys(t.evaluation.scores).length" class="muted">
+                  本轮未计入维度分
+                </span>
+              </el-descriptions-item>
+              <el-descriptions-item label="AI 评语">
+                {{ t.evaluation.comment }}
+              </el-descriptions-item>
+              <el-descriptions-item v-if="t.evaluation.follow_up_question" label="追问">
+                {{ t.evaluation.follow_up_question }}
+              </el-descriptions-item>
+            </el-descriptions>
+            <el-alert
+              v-else
+              title="本轮暂无评分记录（评分失败或尚未评分），原话已完整保留"
+              type="info"
+              :closable="false"
+              style="margin-top: 12px"
+            />
+          </el-collapse-item>
+        </el-collapse>
+
+        <!-- 历史会话无原话：回退为仅展示评分明细 -->
+        <el-collapse v-else>
           <el-collapse-item
             v-for="(e, i) in report.evaluations"
             :key="i"
             :title="`第 ${i + 1} 次作答`"
           >
-            <el-descriptions :column="1" border>
+            <el-descriptions :column="1" border label-width="88px">
               <el-descriptions-item label="评分">
                 <el-tag
                   v-for="(v, k) in e.scores"
@@ -87,7 +172,7 @@
                   size="small"
                   style="margin-right: 6px"
                 >
-                  {{ k }}: {{ v }}
+                  {{ dimName(k) }}: {{ v }}
                 </el-tag>
               </el-descriptions-item>
               <el-descriptions-item label="评语">{{ e.comment }}</el-descriptions-item>
@@ -115,6 +200,18 @@ const report = ref(null)
 const radarRef = ref(null)
 
 const finishedSessions = computed(() => sessions.value.filter((s) => s.status === 'finished'))
+
+// 完整对话（候选人原话）：报告接口按轮次返回，旧会话为空数组
+const turns = computed(() => report.value?.turns || [])
+const answerCharCount = computed(() =>
+  turns.value.reduce((sum, t) => sum + (t.answer || '').length, 0),
+)
+
+/** 维度 key -> 中文名（找不到时回落 key，兼容历史模板） */
+function dimName(key) {
+  const dim = report.value?.report?.dim_scores?.find((d) => d.key === key)
+  return dim?.name || key
+}
 
 const verdictType = computed(() => {
   const map = { 强烈推荐: 'success', 推荐: 'success', 待定: 'warning', 不推荐: 'danger' }
@@ -213,5 +310,69 @@ onMounted(load)
 .radar {
   width: 480px;
   height: 360px;
+}
+
+.turn-meta {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #9ca3af;
+}
+
+.turn-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding-right: 12px;
+}
+
+.turn-question {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #374151;
+}
+
+.qa-block {
+  margin-bottom: 12px;
+}
+
+.qa-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.qa-count {
+  color: #9ca3af;
+}
+
+.qa-question {
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: #f3f4f6;
+  color: #111827;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.qa-answer {
+  padding: 10px 14px;
+  border-left: 3px solid #6366f1;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #111827;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.muted {
+  font-size: 12px;
+  color: #9ca3af;
 }
 </style>
