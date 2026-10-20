@@ -638,23 +638,62 @@ def build_button(text: str, value: dict, *, button_type: str = "default") -> dic
     }
 
 
-def card_to_markdown(card: dict) -> str:
-    """把卡片降级为纯 Markdown 文本（用于 dry-run 预览与日志）。"""
-    title = (card.get("header") or {}).get("title", {}).get("content", "")
-    lines = [f"【{title}】", ""]
-    for el in card.get("elements") or []:
-        if el.get("tag") == "div":
-            lines.append((el.get("text") or {}).get("content", ""))
-            lines.append("")
-        elif el.get("tag") == "action":
+def _walk_card_elements(elements: Any, out: list[str]) -> None:
+    """递归把卡片元素摊平成文本行（供 :func:`card_to_markdown` 使用）。
+
+    支持：div（含 ``fields`` 两列字段）/ column_set / action / note。
+    ``fields`` 的「标签\\n值」在纯文本里压成「标签：值」，否则 dry-run 会漏掉
+    薪酬这类只存在字段块里的信息。
+    """
+    for el in elements or []:
+        if not isinstance(el, dict):
+            continue
+        tag = el.get("tag")
+        if tag == "div":
+            content = (el.get("text") or {}).get("content") or ""
+            if content:
+                out.append(content)
+            fields = el.get("fields") or []
+            if fields:
+                for f in fields:
+                    text = (f.get("text") or {}).get("content") or ""
+                    if text:
+                        out.append(text.replace("\n", "："))
+            if content or fields:
+                out.append("")
+        elif tag == "markdown":
+            content = el.get("content") or ""
+            if content:
+                out.append(content)
+                out.append("")
+        elif tag == "column_set":
+            for col in el.get("columns") or []:
+                _walk_card_elements(col.get("elements"), out)
+        elif tag == "note":
+            texts = [
+                (item.get("text") or {}).get("content") or ""
+                for item in (el.get("elements") or [])
+            ]
+            texts = [t for t in texts if t]
+            if texts:
+                out.append("".join(texts))
+                out.append("")
+        elif tag == "action":
             labels = [
-                (item.get("text") or {}).get("content", "")
+                (item.get("text") or {}).get("content") or ""
                 for item in (el.get("actions") or [])
             ]
             labels = [label for label in labels if label]
             if labels:
-                lines.append("【按钮】" + " / ".join(labels))
-                lines.append("")
+                out.append("【按钮】" + " / ".join(labels))
+                out.append("")
+
+
+def card_to_markdown(card: dict) -> str:
+    """把卡片降级为纯 Markdown 文本（用于 dry-run 预览与日志）。"""
+    title = (card.get("header") or {}).get("title", {}).get("content", "")
+    lines = [f"【{title}】", ""]
+    _walk_card_elements(card.get("elements"), lines)
     return "\n".join(lines).strip()
 
 

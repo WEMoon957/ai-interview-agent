@@ -6,6 +6,7 @@
 - 推送失败/未配置收件人/开关关闭时均不抛异常，返回明确状态；
 - 现有纯文本卡片行为零回归（``build_card`` 不传 actions 时结构不变）。
 """
+import json
 import uuid
 from datetime import date, datetime, timezone
 
@@ -122,7 +123,8 @@ def test_approval_card_has_two_buttons_with_offer_id():
     values = [a["value"] for a in actions]
     assert {"offer_id": str(offer.id), "action": "approve"} in values
     assert {"offer_id": str(offer.id), "action": "reject"} in values
-    assert card["header"]["template"] == "orange"
+    # 改版后标题栏改深灰「档案」配色（见 APPROVAL_HEADER_TEMPLATE）
+    assert card["header"]["template"] == on.APPROVAL_HEADER_TEMPLATE
 
 
 def test_approval_card_contains_offer_summary():
@@ -133,6 +135,45 @@ def test_approval_card_contains_offer_summary():
     assert "昆明南屏店" in text
     assert "包吃住" in text
     assert "到店直招" in text
+
+
+def test_approval_card_shows_salary_package():
+    """改版核心：审批卡片必须出现试用期 / 转正后两档薪资。"""
+    offer = _offer(
+        status="pending_approval",
+        probation_salary="4,800 元/月",
+        regular_salary="5,500 元/月",
+    )
+    text = card_to_markdown(on.build_approval_card(offer))
+    assert "薪酬" in text
+    assert "试用期薪资" in text and "4,800 元/月" in text
+    assert "转正后薪资" in text and "5,500 元/月" in text
+
+
+def test_approval_card_marks_missing_salary_as_unfilled():
+    """薪资未填时要显式写「未填写」，不能静默消失。"""
+    offer = _offer(status="pending_approval")
+    text = card_to_markdown(on.build_approval_card(offer))
+    assert "未填写" in text
+
+
+def test_approval_card_sections_and_verdict_color():
+    """三段式档案结构 + 录用建议着色（lark_md 富文本）。"""
+    offer = _offer(status="pending_approval")
+    card = on.build_approval_card(
+        offer,
+        scores={"screening_score": 91, "ai_interview_score": 82.5,
+                "offline_score": 86, "final_score": 86.4, "final_verdict": "强烈推荐"},
+        candidate={"phone": "13800002210", "email": "a@b.com", "source_channel": "BOSS直聘"},
+    )
+    text = card_to_markdown(card)
+    assert "💰" in text and "📅" in text and "📊" in text
+    assert "BOSS直聘" in text
+    assert "13800002210" in text
+    raw = json.dumps(card, ensure_ascii=False)
+    assert "<font color='green'>强烈推荐</font>" in raw
+    # 字段块是飞书原生 fields 结构，不能被写成一段纯文本
+    assert any(el.get("fields") for el in card["elements"] if el.get("tag") == "div")
 
 
 # ── 各事件卡片 ───────────────────────────────────────────────

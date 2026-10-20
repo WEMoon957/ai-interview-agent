@@ -67,6 +67,56 @@ def _offer_lines(offer: Offer) -> list[str]:
     ]
 
 
+# 审批卡片标题栏配色：深灰（「档案」观感，视觉重心留给正文；与已批准/驳回等彩色事件卡区分）
+APPROVAL_HEADER_TEMPLATE = "grey"
+
+# 录用建议 → lark_md 字体颜色（飞书富文本仅支持 red / green / grey 三色）
+_VERDICT_COLORS = {
+    "强烈推荐": "green",
+    "推荐": "green",
+    "待定": "grey",
+    "不推荐": "red",
+    "不建议": "red",
+}
+
+
+def _salary_text(value) -> str:
+    """薪资字段展示：空值显式写「未填写」，避免审批人误以为卡片漏了这项。"""
+    text = str(value or "").strip()
+    return text or "未填写"
+
+
+def _verdict_html(verdict: str) -> str:
+    """录用建议渲染成带颜色的富文本片段（无建议时返回空串，不占位）。"""
+    text = (verdict or "").strip()
+    if not text:
+        return ""
+    color = _VERDICT_COLORS.get(text, "grey")
+    return f"  <font color='{color}'>{text}</font>"
+
+
+def _fields_div(pairs: list[tuple[str, str]]) -> dict:
+    """「标签在上、值在下」的字段块：飞书里两列并排，撑起档案的网格感。"""
+    return {
+        "tag": "div",
+        "fields": [
+            {
+                "is_short": True,
+                "text": {"tag": "lark_md", "content": f"**{label}**\n{value}"},
+            }
+            for label, value in pairs
+        ],
+    }
+
+
+def _section(title: str, pairs: list[tuple[str, str]]) -> list[dict]:
+    """档案分区：小标题 + 字段块（对应设计稿里「薪酬 / 入职 / 评估」三段）。"""
+    return [
+        {"tag": "div", "text": {"tag": "lark_md", "content": title}},
+        _fields_div(pairs),
+    ]
+
+
 def build_approval_card(
     offer: Offer,
     *,
@@ -74,67 +124,130 @@ def build_approval_card(
     candidate: dict | None = None,
     settings: Settings | None = None,
 ) -> dict:
-    """待审批卡片（带「同意 / 驳回」按钮）。
+    """待审批卡片（D 版「候选人档案」：薪酬 / 入职 / 评估 三段式 + 同意·驳回）。
 
-    审批人需要先核对候选人信息与评分，因此卡片额外带上：
-    ``scores``（初筛 / AI 面试 / 线下复试 / 最终加权分）与
-    ``candidate``（电话、邮箱、投递渠道）。缺数据时对应行自动省略。
+    与改版前的差异
+    --------------
+    - **补上薪资**：试用期 / 转正后两档直接读 ``offer.probation_salary`` /
+      ``regular_salary``（库中已有字段，无需迁移）；缺数据时显式写「未填写」。
+    - **标题栏改深灰**（:data:`APPROVAL_HEADER_TEMPLATE`），视觉重心让给正文。
+    - 其余信息一项不减：岗位 / 门店 / 来源 / 报到 / 四档评分 / 联系方式 / 备注。
+
+    Args:
+        scores: 初筛 / AI 面试 / 线下复试 / 最终加权分 + 录用建议，缺数据时整段评估省略。
+        candidate: 电话、邮箱、投递渠道，缺数据时对应行自动省略。
+        settings: 保留参数以兼容既有调用方（本函数不再依赖配置）。
     """
-    s = settings or get_settings()
-    lines = [
-        "**有新的 Offer 待审批，请核对候选人信息与评分后处理。**",
-        "",
-        *_offer_lines(offer),
-        f"**应聘来源**：{'到店直招' if offer.source == 'walk_in' else '线上投递'}",
+    score_map = scores or {}
+    verdict = str(score_map.get("final_verdict") or "")
+
+    report_date = offer.report_date.isoformat() if offer.report_date else "待定"
+    report_time = str(offer.report_time or "").strip()
+    report_when = f"{report_date} {report_time}".strip()
+
+    # ① 档案头：姓名 + 录用建议、岗位 · 门店、来源
+    meta_bits = ["到店直招" if offer.source == "walk_in" else "线上投递"]
+    channel = str((candidate or {}).get("source_channel") or "").strip()
+    if channel:
+        meta_bits.append(channel)
+    head = "\n".join(
+        [
+            f"**{offer.candidate_name or '—'}**{_verdict_html(verdict)}",
+            f"{offer.job_title or '—'} ｜ {offer.store_name or '—'}",
+            f"<font color='grey'>{' · '.join(meta_bits)}</font>",
+        ]
+    )
+    elements: list[dict] = [
+        {"tag": "div", "text": {"tag": "lark_md", "content": head}},
+        {"tag": "hr"},
     ]
 
-    # 候选人联系信息（便于审批人核对身份 / 后续联系）
-    if candidate:
-        contacts = []
-        if candidate.get("phone"):
-            contacts.append(f"电话 {candidate['phone']}")
-        if candidate.get("email"):
-            contacts.append(f"邮箱 {candidate['email']}")
-        if contacts:
-            lines.append("**候选人联系方式**：" + " ｜ ".join(contacts))
-        if candidate.get("source_channel"):
-            lines.append(f"**投递渠道**：{candidate['source_channel']}")
-
-    # 各环节评分（用户诉求：审批时要能看到 AI 分与面试官分）
-    if scores:
-        lines += [
-            "",
-            "**各环节评分**",
-            f"· 简历初筛：{_fmt_score(scores.get('screening_score'))}",
-            f"· AI 面试：{_fmt_score(scores.get('ai_interview_score'))}",
-            f"· 线下复试（面试官）：{_fmt_score(scores.get('offline_score'))}",
-        ]
-        verdict = scores.get("final_verdict") or ""
-        final_line = f"· **最终加权分：{_fmt_score(scores.get('final_score'))}**"
-        if verdict:
-            final_line += f"（{verdict}）"
-        lines.append(final_line)
-
-    if offer.note:
-        lines.append(f"**备注**：{offer.note}")
-
-    return build_card(
-        "🔔 Offer 待审批",
-        _TEMPLATES[EVENT_PENDING_APPROVAL],
-        ["\n".join(lines)],
-        actions=[
-            build_button(
-                "同意",
-                {"offer_id": str(offer.id), "action": "approve"},
-                button_type="primary",
-            ),
-            build_button(
-                "驳回",
-                {"offer_id": str(offer.id), "action": "reject"},
-                button_type="danger",
-            ),
+    # ② 薪酬：本次改版的核心，审批人第一眼看的就是这行数字
+    elements += _section(
+        "💰 **薪酬**",
+        [
+            ("试用期薪资", _salary_text(offer.probation_salary)),
+            ("转正后薪资", _salary_text(offer.regular_salary)),
         ],
     )
+    elements.append({"tag": "hr"})
+
+    # ③ 入职安排
+    onboard: list[tuple[str, str]] = [
+        ("拟报到", report_when),
+        ("试用期", f"{offer.probation_days} 天"),
+    ]
+    location = str(offer.work_location or "").strip()
+    if location:
+        onboard.append(("工作地点", location))
+    elements += _section("📅 **入职**", onboard)
+
+    # ④ 评估结果（无评分数据时整段省略，避免满屏「—」）
+    if score_map:
+        elements.append({"tag": "hr"})
+        elements += _section(
+            "📊 **评估**",
+            [
+                ("简历初筛", _fmt_score(score_map.get("screening_score"))),
+                ("AI 面试", _fmt_score(score_map.get("ai_interview_score"))),
+                ("线下复试", _fmt_score(score_map.get("offline_score"))),
+                ("最终加权", _fmt_score(score_map.get("final_score"))),
+            ],
+        )
+
+    # ⑤ 补充信息：联系方式 / 备注（灰色小字，不抢正文）
+    contact_bits = []
+    if candidate:
+        if candidate.get("phone"):
+            contact_bits.append(f"电话 {candidate['phone']}")
+        if candidate.get("email"):
+            contact_bits.append(f"邮箱 {candidate['email']}")
+    extras: list[str] = []
+    if contact_bits:
+        extras.append("联系方式：" + " ｜ ".join(contact_bits))
+    if offer.note:
+        extras.append(f"备注：{offer.note}")
+    if extras:
+        elements.append({"tag": "hr"})
+        elements.append(
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": "\n".join(
+                        f"<font color='grey'>{line}</font>" for line in extras
+                    ),
+                },
+            }
+        )
+
+    elements.append({"tag": "hr"})
+    elements.append(
+        {
+            "tag": "action",
+            "actions": [
+                build_button(
+                    "同意",
+                    {"offer_id": str(offer.id), "action": "approve"},
+                    button_type="primary",
+                ),
+                build_button(
+                    "驳回",
+                    {"offer_id": str(offer.id), "action": "reject"},
+                    button_type="danger",
+                ),
+            ],
+        }
+    )
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": APPROVAL_HEADER_TEMPLATE,
+            "title": {"tag": "plain_text", "content": "Offer 待审批"},
+        },
+        "elements": elements,
+    }
 
 
 def build_offer_card(
