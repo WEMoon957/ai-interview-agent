@@ -468,6 +468,7 @@ def get_report(session_id: uuid.UUID, db: Session = Depends(get_db)):
                 {
                     "question_id": e.question_id,
                     "scores": e.scores,
+                    "evidence": e.evidence or [],
                     "comment": e.comment,
                     "follow_up_needed": e.follow_up_needed,
                     "follow_up_question": e.follow_up_question,

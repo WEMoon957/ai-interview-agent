@@ -22,6 +22,9 @@ class AnswerEvaluation(TimestampMixin, Base):
     question_id: Mapped[str] = mapped_column(String(64), nullable=False)
     # 维度 key -> 得分（0~max_score），见共享知识 #4
     scores: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # 行为锚定证据：[{dimension, level, quote, reason, verified}]
+    # quote 是候选人原话的连续片段，verified 表示它是否真的出现在回答原文里（防模型编造）
+    evidence: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
     follow_up_needed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     follow_up_question: Mapped[str] = mapped_column(Text, nullable=False, default="")

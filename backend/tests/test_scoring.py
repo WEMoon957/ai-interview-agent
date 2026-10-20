@@ -134,7 +134,36 @@ def test_aggregate_report_missing_dimension_key():
     report = aggregate_report(evals, _rubric())
     by_key = {d.key: d for d in report.dim_scores}
     assert by_key["tech_depth"].score == 8.0
-    assert by_key["experience"].score == 0.0  # 缺失 -> 0
+    assert by_key["tech_depth"].covered is True
+    # 其余维度本场没考察到：分数为 0，但标记 covered=False，不被当成「得了 0 分」
+    assert by_key["experience"].score == 0.0
+    assert by_key["experience"].covered is False
+
+
+def test_uncovered_dimension_does_not_drag_total_down():
+    """未考察维度不拉低总分：权重按比例分摊给已考察维度。
+
+    只有 tech_depth（权重 0.40）拿到 8 分，其余三个维度本场没问到。
+    旧口径下 total = 8 × 0.40 × 10 = 32（把「没问到」当成「得了 0 分」）；
+    新口径把 0.40 的权重摊满到 1.0，total = 8 × 10 = 80。
+    """
+    evals = [
+        EvaluationRecord(
+            question_id="q1",
+            scores={"tech_depth": 8},
+            comment="partial",
+            follow_up_needed=False,
+        )
+    ]
+    report = aggregate_report(evals, _rubric())
+    assert report.total_score == 80.0
+
+
+def test_all_dimensions_covered_keeps_legacy_formula():
+    """全部维度都考察到时，总分口径与改造前逐字一致（回归基线）。"""
+    report = aggregate_report(_evals(), _rubric())
+    assert all(d.covered for d in report.dim_scores)
+    assert report.total_score == 75.2
 
 
 def test_aggregate_report_weights_not_sum_to_one():

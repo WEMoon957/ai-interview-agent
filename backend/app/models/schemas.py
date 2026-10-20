@@ -32,6 +32,9 @@ class AnswerScore(BaseModel):
     """LLM 结构化输出：单题评分结果（with_structured_output 校验）。"""
 
     scores: dict[str, float] = Field(description="维度 key -> 得分（0~max_score）")
+    # 评分依据：每条 {dimension, level, quote, reason, verified}
+    # quote 是候选人原话的连续片段，由 _verify_evidence 程序化校验是否真的出现在回答里
+    evidence: list[dict] = Field(default_factory=list, description="行为证据（原话 + 等级）")
     comment: str = Field(description="评分理由，须引用候选人原话佐证")
     follow_up_needed: bool = Field(description="是否需要追问")
     follow_up_question: str = Field(default="", description="追问问题，空串表示无")
@@ -45,6 +48,7 @@ class EvaluationRecord(BaseModel):
     comment: str
     follow_up_needed: bool
     follow_up_question: str = ""
+    evidence: list[dict] = Field(default_factory=list)
 
 
 class DimensionScore(BaseModel):
@@ -55,6 +59,9 @@ class DimensionScore(BaseModel):
     weight: float
     score: float  # 该维度各题均分
     weighted_score: float  # score * weight
+    # 本场面试是否有任何一题考察到该维度。False 表示「未考察」而非「得了 0 分」，
+    # 汇总时不计入总分（权重按比例分摊到已考察维度），避免凭空拉低分数。
+    covered: bool = True
 
 
 class Report(BaseModel):

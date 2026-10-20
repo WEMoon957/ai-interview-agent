@@ -56,9 +56,17 @@
           <el-table-column prop="weight" label="权重" width="100">
             <template #default="{ row }">{{ (row.weight * 100).toFixed(0) }}%</template>
           </el-table-column>
-          <el-table-column prop="score" label="维度得分" width="120" />
+          <el-table-column prop="score" label="维度得分" width="120">
+            <template #default="{ row }">
+              <span v-if="row.covered === false" class="muted">未考察</span>
+              <span v-else>{{ row.score }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="weighted_score" label="加权得分" width="120">
-            <template #default="{ row }">{{ row.weighted_score?.toFixed(2) }}</template>
+            <template #default="{ row }">
+              <span v-if="row.covered === false" class="muted">—</span>
+              <span v-else>{{ row.weighted_score?.toFixed(2) }}</span>
+            </template>
           </el-table-column>
         </el-table>
 
@@ -117,6 +125,29 @@
                 <span class="qa-count">{{ (t.answer || '').length }} 字</span>
               </div>
               <div class="qa-answer">{{ t.answer || '（未作答）' }}</div>
+            </div>
+
+            <div v-if="t.evaluation?.evidence?.length" class="evidence-block">
+              <div class="qa-label">
+                评分依据
+                <span class="qa-count">
+                  {{ t.evaluation.evidence.length }} 条 · 原文可核验
+                  {{ t.evaluation.evidence.filter((e) => e.verified).length }} 条
+                </span>
+              </div>
+              <div
+                v-for="(ev, idx) in t.evaluation.evidence"
+                :key="idx"
+                class="evidence-item"
+                :class="{ 'is-unverified': !ev.verified }"
+              >
+                <el-tag size="small" :type="levelType(ev.level)" effect="plain">
+                  {{ ev.level }}
+                </el-tag>
+                <span class="evidence-dim">{{ dimName(ev.dimension) }}</span>
+                <span class="evidence-quote">「{{ ev.quote }}」</span>
+                <span v-if="!ev.verified" class="evidence-warn">未在原文找到</span>
+              </div>
             </div>
 
             <el-descriptions
@@ -211,6 +242,12 @@ const answerCharCount = computed(() =>
 function dimName(key) {
   const dim = report.value?.report?.dim_scores?.find((d) => d.key === key)
   return dim?.name || key
+}
+
+/** 行为锚定等级 -> el-tag 类型（L1-L2 危险、L3 中性、L4-L5 优秀） */
+function levelType(level) {
+  const map = { L1: 'danger', L2: 'warning', L3: 'info', L4: 'success', L5: 'success' }
+  return map[level] || 'info'
 }
 
 const verdictType = computed(() => {
@@ -374,5 +411,42 @@ onMounted(load)
 .muted {
   font-size: 12px;
   color: #9ca3af;
+}
+
+.evidence-block {
+  margin-top: 12px;
+}
+
+.evidence-item {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 12px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  background: #f8fafc;
+  border: 0.5px solid #e5e7eb;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.evidence-item.is-unverified {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.evidence-dim {
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+.evidence-quote {
+  color: #111827;
+}
+
+.evidence-warn {
+  font-size: 12px;
+  color: #dc2626;
 }
 </style>

@@ -37,6 +37,11 @@ def aggregate_report(
       - weighted_score = 维度均分 × weight；
       - total_score = Σ weighted_score × 10（各维度满分 10 时即百分制）。
 
+    **未考察维度不参与计分**（BARS 改造后尤为关键）：行为锚定要求「没有原话支撑的
+    维度不给分」，因此一场面试里某些维度可能一次都没被考察到。这类维度标记
+    ``covered=False``，其权重按比例分摊到已考察维度上 —— 否则「没考到」会被当成
+    「得了 0 分」，凭空把这场的总分压低。全部维度都覆盖时，公式与旧版完全一致。
+
     Args:
         evaluations: 逐题评分记录（EvaluationRecord 或等价 dict）。
         rubric: 评分维度列表（RubricDimension 或等价 dict）。
@@ -46,6 +51,13 @@ def aggregate_report(
     """
     evals = [_to_dict(e) for e in (evaluations or [])]
     dims = [_to_dict(d) for d in (rubric or [])]
+
+    # 本场实际被考察到的维度（任意一题的 scores 里出现过即算）
+    covered_keys = {
+        str(k)
+        for ev in evals
+        for k in ((ev.get("scores") or {}).keys())
+    }
 
     dim_scores: list[DimensionScore] = []
     for dim in dims:
@@ -63,6 +75,7 @@ def aggregate_report(
                 except (TypeError, ValueError):
                     continue
 
+        covered = str(key) in covered_keys
         avg = sum(values) / len(values) if values else 0.0
         weighted = avg * weight
 
@@ -73,10 +86,20 @@ def aggregate_report(
                 weight=weight,
                 score=round(avg, 2),
                 weighted_score=round(weighted, 2),
+                covered=covered,
             )
         )
 
-    total_score = round(sum(d.weighted_score for d in dim_scores) * 10.0, 2)
+    total_weight = sum(d.weight for d in dim_scores)
+    covered_weight = sum(d.weight for d in dim_scores if d.covered)
+    covered_sum = sum(d.weighted_score for d in dim_scores if d.covered)
+
+    if 0 < covered_weight < total_weight:
+        # 有维度没考察到：把缺失权重按比例分摊给已考察维度，保持总分口径不缩水
+        total_score = round(covered_sum / covered_weight * total_weight * 10.0, 2)
+    else:
+        total_score = round(covered_sum * 10.0, 2)
+
     verdict = verdict_from_score(total_score)
     summary = _build_summary(dim_scores, total_score, verdict)
 
@@ -94,10 +117,15 @@ def _build_summary(
     verdict: str,
 ) -> str:
     """生成确定性的总体评价与录用风险提示（不依赖 LLM，保证纯函数可复现）。"""
-    if not dim_scores:
+    # 只从「本场真正考察过」的维度里挑强弱项，避免把未考察维度说成短板
+    ranked = sorted(
+        (d for d in dim_scores if d.covered),
+        key=lambda d: d.weighted_score,
+        reverse=True,
+    )
+    if not ranked:
         return f"本次面试无有效评分数据，综合分 {total_score}，录用建议：{verdict}。"
 
-    ranked = sorted(dim_scores, key=lambda d: d.weighted_score, reverse=True)
     strongest = ranked[0]
     weakest = ranked[-1]
 

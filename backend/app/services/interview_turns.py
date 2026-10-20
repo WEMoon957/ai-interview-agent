@@ -150,6 +150,7 @@ def align_evaluations(turns: list[InterviewTurn], evaluations: list) -> dict[int
         result[turn.turn_index] = {
             "question_id": getattr(ev, "question_id", ""),
             "scores": getattr(ev, "scores", {}) or {},
+            "evidence": getattr(ev, "evidence", []) or [],
             "comment": getattr(ev, "comment", "") or "",
             "follow_up_needed": bool(getattr(ev, "follow_up_needed", False)),
             "follow_up_question": getattr(ev, "follow_up_question", "") or "",
