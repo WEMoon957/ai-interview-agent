@@ -63,16 +63,23 @@ class Settings(BaseSettings):
     # ── 候选人邮件（Offer 通知 / 接受确认） ──────────────────────
     # 总开关：False（或未配 SMTP）时所有候选人邮件静默跳过，不影响主流程
     candidate_mail_enabled: bool = False
-    # 发件 SMTP：腾讯企业邮箱为 smtp.exmail.qq.com:465（SSL）
-    smtp_host: str = "smtp.exmail.qq.com"
+    # 发件 SMTP：飞书企业邮箱 smtp.feishu.cn:465（SSL，推荐）/ 587（STARTTLS）
+    # 额度上限：800 封/天、外部收件人 500 封/天（手动+自动共享），
+    #           SMTP 频率 200 封/100 秒，每日北京时间 08:00 重置。
+    smtp_host: str = "smtp.feishu.cn"
     smtp_port: int = 465
     smtp_use_ssl: bool = True
-    # 发件邮箱（如 hr@your-domain.com）
+    # 发件邮箱：必须与本域一致（如 hr@benerniang.com），飞书拒绝伪造发件人
     smtp_username: str = ""
-    # 客户端专用密码（腾讯企业邮后台「设置→安全→客户端专用密码」生成；勿填登录密码）
+    # 客户端专用密码（飞书邮箱「设置→第三方客户端/客户端密码」生成；勿填网页登录密码）
     smtp_password: str = ""
-    # 发件人显示名（候选人邮件列表里看到的名字）
-    mail_from_name: str = "昆明笨二娘餐饮管理有限公司 · 招聘组"
+    # 发件人显示名（候选人收件箱里看到的名字，如「人事行政」）
+    mail_from_name: str = "人事行政"
+    # 邮件主题/落款里的公司名（与显示名解耦：显示名可只写岗位，
+    # 主题仍是「XX 公司诚邀你加入」；留空则回退到 mail_from_name）
+    mail_company_name: str = "昆明笨二娘餐饮管理有限公司"
+    # Reply-To：候选人直接回车时投递到哪个邮箱；留空 = 等于发件邮箱
+    mail_reply_to: str = ""
     # 单封邮件发送超时（秒）
     smtp_timeout: int = 15
 

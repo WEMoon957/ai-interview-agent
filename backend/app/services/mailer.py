@@ -46,6 +46,24 @@ def is_mail_ready(settings: Settings | None = None) -> bool:
     )
 
 
+def _from_address(s: Settings) -> str:
+    """发件地址：固定取 SMTP 登录名（企业邮要求 From 与登录账号同域）。"""
+    return (s.smtp_username or "").strip()
+
+
+def _reply_to(s: Settings) -> str:
+    """回信地址：未单独配置时回落到发件地址，保证「直接回复」不落空。"""
+    return (getattr(s, "mail_reply_to", "") or _from_address(s) or "").strip()
+
+
+def _company_name(s: Settings) -> str:
+    """主题/落款用的公司名：显式配置优先，其次从旧格式显示名（「公司 · 部门」）截取。"""
+    explicit = (getattr(s, "mail_company_name", "") or "").strip()
+    if explicit:
+        return explicit
+    return (s.mail_from_name or "").split("·")[0].strip() or "公司"
+
+
 def send_mail(
     to: str,
     subject: str,
@@ -69,9 +87,15 @@ def send_mail(
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = Header(subject, "utf-8")
-    # 显示名 + 发件地址：显示名用 Header 编码以正确显示中文
-    msg["From"] = f"{Header(s.mail_from_name, 'utf-8').encode()} <{s.smtp_username}>"
+    # 显示名 + 发件地址：显示名用 Header 编码以正确显示中文。
+    # 发件地址必须是 SMTP 登录名（飞书等企业邮会拒绝伪造同域发件人）。
+    from_addr = _from_address(s)
+    msg["From"] = f"{Header(s.mail_from_name, 'utf-8').encode()} <{from_addr}>"
     msg["To"] = recipient
+    # Reply-To：候选人点「回复」时回到公共邮箱（默认与发件地址相同）
+    reply_to = _reply_to(s)
+    if reply_to:
+        msg["Reply-To"] = reply_to
 
     if text:
         msg.attach(MIMEText(text, "plain", "utf-8"))
@@ -117,7 +141,8 @@ def _shell(title: str, body_html: str) -> str:
         f'<div style="font-size:19px;font-weight:700;margin-bottom:16px;color:#1f2329;">{title}</div>'
         f"{body_html}"
         '<div style="margin-top:28px;padding-top:16px;border-top:1px solid #e5e6eb;'
-        'font-size:12px;color:#8a919f;">本邮件由招聘系统自动发送，请勿直接回复。</div>'
+        'font-size:12px;color:#8a919f;">本邮件由招聘系统自动发送，'
+        "如对内容有疑问，直接回复本邮件即可联系 HR。</div>"
         "</div></div>"
     )
 
@@ -182,7 +207,7 @@ def build_offer_invite_mail(
         (主题, HTML 正文)
     """
     s = settings or get_settings()
-    company = (company_name or s.mail_from_name.split("·")[0].strip() or "公司")
+    company = (company_name or _company_name(s)).strip() or "公司"
     subject = f"【录用通知】{candidate_name} 你好，{company}诚邀你加入"
 
     rows = _info_rows(
@@ -276,7 +301,7 @@ def build_offer_accepted_mail(
 ) -> tuple[str, str]:
     """第二封：候选人接受后的确认邮件（录用要点 + 报到指引）。"""
     s = settings or get_settings()
-    company = s.mail_from_name.split("·")[0].strip() or "公司"
+    company = _company_name(s)
     subject = f"【入职指引】{candidate_name}，欢迎加入{company}"
 
     rows = _info_rows(
@@ -310,4 +335,7 @@ def mail_configured_summary(settings: Settings | None = None) -> str:
     s = settings or get_settings()
     if not is_mail_ready(s):
         return "未启用"
-    return f"{s.smtp_host}:{s.smtp_port} 发件人={s.smtp_username} 显示名={s.mail_from_name}"
+    return (
+        f"{s.smtp_host}:{s.smtp_port} 发件人={_from_address(s)} "
+        f"显示名={s.mail_from_name} 回信={_reply_to(s) or '未设置'}"
+    )

@@ -8,6 +8,8 @@
 - offer_notify 两个入口函数在「无邮箱」时的降级
 """
 
+from email import message_from_string
+from email.header import decode_header, make_header
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -18,13 +20,15 @@ from app.services.offer_notify import mail_offer_accepted, mail_offer_invite
 def _settings(**kw):
     base = dict(
         candidate_mail_enabled=True,
-        smtp_host="smtp.exmail.qq.com",
+        smtp_host="smtp.feishu.cn",
         smtp_port=465,
         smtp_use_ssl=True,
         smtp_username="hr@example.com",
         smtp_password="client-secret",
         smtp_timeout=5,
-        mail_from_name="昆明笨二娘餐饮管理有限公司 · 招聘组",
+        mail_from_name="人事行政",
+        mail_company_name="昆明笨二娘餐饮管理有限公司",
+        mail_reply_to="",
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -92,6 +96,58 @@ def test_send_mail_success_path():
     assert server.sendmail.call_count == 1
     # 收件人是候选人
     assert server.sendmail.call_args[0][1] == ["candidate@example.com"]
+
+
+def test_send_mail_builds_from_and_reply_to():
+    """From = 显示名 + 登录账号（同域），Reply-To 默认回落到登录账号。"""
+    server = MagicMock()
+    cm = MagicMock()
+    cm.__enter__.return_value = server
+    with patch("smtplib.SMTP_SSL", return_value=cm):
+        ok, _ = mailer.send_mail(
+            "candidate@example.com", "主题", "<p>正文</p>", settings=_settings()
+        )
+    assert ok is True
+    msg = message_from_string(server.sendmail.call_args[0][2])
+    from_display = str(make_header(decode_header(msg["From"])))
+    assert from_display == "人事行政 <hr@example.com>"
+    assert msg["Reply-To"] == "hr@example.com"
+
+
+def test_send_mail_reply_to_override():
+    """显式配置 MAIL_REPLY_TO 时优先于发件地址。"""
+    server = MagicMock()
+    cm = MagicMock()
+    cm.__enter__.return_value = server
+    with patch("smtplib.SMTP_SSL", return_value=cm):
+        mailer.send_mail(
+            "candidate@example.com",
+            "主题",
+            "<p>正文</p>",
+            settings=_settings(mail_reply_to="hr@benerniang.com"),
+        )
+    msg = message_from_string(server.sendmail.call_args[0][2])
+    assert msg["Reply-To"] == "hr@benerniang.com"
+    assert "hr@example.com" in msg["From"]  # 发件地址不被 Reply-To 改写
+
+
+def test_company_name_is_independent_from_display_name():
+    """显示名只是「人事行政」，主题里仍应是公司全称。"""
+    subject, _ = mailer.build_offer_accepted_mail(
+        candidate_name="李俊颖",
+        job_title="AI落地工程师",
+        store_name="南屏店",
+        report_date=None,
+        settings=_settings(),
+    )
+    assert "昆明笨二娘餐饮管理有限公司" in subject
+    assert "人事行政" not in subject
+
+
+def test_company_name_falls_back_to_legacy_display_name():
+    """未配 MAIL_COMPANY_NAME 时，兼容旧格式「公司 · 部门」显示名。"""
+    s = _settings(mail_company_name="", mail_from_name="某某餐饮 · 招聘组")
+    assert mailer._company_name(s) == "某某餐饮"
 
 
 # ── 模板内容 ────────────────────────────────────────────────
