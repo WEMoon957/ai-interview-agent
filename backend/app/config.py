@@ -73,8 +73,8 @@ class Settings(BaseSettings):
     smtp_username: str = ""
     # 客户端专用密码（飞书邮箱「设置→第三方客户端/客户端密码」生成；勿填网页登录密码）
     smtp_password: str = ""
-    # 发件人显示名（候选人收件箱里看到的名字，如「人事行政」）
-    mail_from_name: str = "人事行政"
+    # 发件人显示名（候选人收件箱里看到的名字，走企业邮公共信箱时带公司全称更可信）
+    mail_from_name: str = "昆明笨二娘餐饮管理有限公司人事行政"
     # 邮件主题/落款里的公司名（与显示名解耦：显示名可只写岗位，
     # 主题仍是「XX 公司诚邀你加入」；留空则回退到 mail_from_name）
     mail_company_name: str = "昆明笨二娘餐饮管理有限公司"
