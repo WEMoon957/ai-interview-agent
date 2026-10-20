@@ -187,6 +187,76 @@ def _load_kpi_config() -> dict:
 KPI_CONFIG = _load_kpi_config()
 
 
+# ── 候选人维度匹配配置 ─────────────────────────
+#
+# 目标：把「简历初筛 / AI 面试 / 线下复试」三个环节各不相同的 dim_scores key，
+# 归并到同一套「标准维度」，产出跨环节的匹配度画像。
+#
+# 配置唯一入口是同级 ``dim_config.json``（用户可直接改，无需动代码）；
+# 这里内嵌一份默认值，保证文件缺失/损坏时面板照常可算。
+
+DEFAULT_DIM_CONFIG = {
+    "canonical": [
+        {"key": "job_match", "name": "岗位匹配"},
+        {"key": "communication", "name": "沟通表达"},
+        {"key": "attitude", "name": "工作态度"},
+        {"key": "stability", "name": "稳定性"},
+    ],
+    "stage_key_map": {
+        "screening": {"skill_match": "job_match", "experience": "job_match",
+                      "stability": "stability", "attitude": "attitude"},
+        "ai": {"job_fit": "job_match", "tech_depth": "job_match", "experience": "job_match",
+               "communication": "communication", "attitude": "attitude",
+               "culture_fit": "attitude", "stability": "stability"},
+        "offline": {"job_match": "job_match", "communication": "communication",
+                    "attitude": "attitude", "service": "attitude", "stability": "stability"},
+    },
+    "name_alias": {
+        "job_match": ["技能匹配", "经验相关", "岗位匹配", "技术深度", "项目经验", "专业能力", "匹配"],
+        "communication": ["沟通表达", "沟通", "表达"],
+        "attitude": ["工作态度", "素质与态度", "态度", "服务意识", "文化契合", "责任心"],
+        "stability": ["稳定性", "任职稳定"],
+    },
+    "stage_weight": {"screening": 0.20, "ai": 0.40, "offline": 0.40},
+}
+
+DIM_CONFIG_PATH = os.path.join(BASE_DIR, "dim_config.json")
+
+
+def _load_dim_config() -> dict:
+    """优先读 dim_config.json；缺失/损坏则用内建默认，保证面板永不崩。"""
+    try:
+        with open(DIM_CONFIG_PATH, "r", encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        if isinstance(cfg, dict) and cfg.get("canonical"):
+            return cfg
+        logger.warning("dim_config.json 结构异常，回退内建默认配置")
+    except FileNotFoundError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("读取 dim_config.json 失败，使用内建默认：%s", exc)
+    return DEFAULT_DIM_CONFIG
+
+
+DIM_CONFIG = _load_dim_config()
+DIM_AXES = [{"key": c.get("key"), "name": c.get("name") or c.get("key")}
+            for c in DIM_CONFIG.get("canonical") or []]
+DIM_KEYS = [a["key"] for a in DIM_AXES]
+DIM_NAMES = {a["key"]: a["name"] for a in DIM_AXES}
+
+# 录用建议阈值（与后端 services/scoring.py::verdict_from_score 同口径）
+DIM_VERDICT_BANDS = ((80, "强烈推荐"), (65, "推荐"), (50, "待定"))
+
+
+def _verdict_from_score(value: float | None) -> str:
+    if value is None:
+        return ""
+    for threshold, label in DIM_VERDICT_BANDS:
+        if value >= threshold:
+            return label
+    return "不推荐"
+
+
 def _kpi_status(value, direction, target, alert) -> str:
     """三色状态：green 达成 / yellow 黄区 / red 红区 / na 无数据。"""
     if value is None or target is None or alert is None:
@@ -1216,6 +1286,327 @@ def _q_interview_qa(conn, p, limit: int = 50) -> list[dict]:
     return out
 
 
+# ── 候选人维度匹配度 ─────────────────────────────────────────
+#
+# 口径：把三个环节（简历初筛 / AI 面试 / 线下复试）各自的 dim_scores 归并到
+# 统一维度（见 dim_config.json），按环节权重加权成 0~100 的匹配度；
+# 末尾的「综合素质」直接复用 recruitment_summaries 的加权分与结论，不新增评分逻辑。
+#
+# 三个环节各取**最新一条**（同环节多轮不跨轮平均），某维度在任何环节都无数据 → null（前端显示 —），
+# 归并不上的维度落「其他」并在弹层显式列出，绝不静默丢弃。
+
+# 各环节「最新一条」的维度分（供归并）。三张表口径一致：只取有维度分的记录。
+_DIM_SQL_SCREEN = _CTE + """
+SELECT DISTINCT ON (rs.candidate_id)
+       rs.candidate_id::text AS cid,
+       rs.dim_scores         AS dims,
+       rs.summary            AS summary,
+       rs.total_score        AS total,
+       rs.created_at         AS at
+  FROM resume_screenings rs
+  JOIN cohort co ON co.id = rs.candidate_id
+  JOIN scope_jobs sj ON sj.id = rs.job_id
+ WHERE jsonb_typeof(rs.dim_scores) = 'array'
+   AND jsonb_array_length(rs.dim_scores) > 0
+ ORDER BY rs.candidate_id, rs.created_at DESC
+"""
+
+_DIM_SQL_AI = _CTE + """
+SELECT DISTINCT ON (s.candidate_id)
+       s.candidate_id::text AS cid,
+       rp.dim_scores        AS dims,
+       rp.summary           AS summary,
+       rp.total_score       AS total,
+       rp.verdict           AS verdict,
+       rp.created_at        AS at
+  FROM session_reports rp
+  JOIN interview_sessions s ON s.id = rp.session_id
+  JOIN interview_templates t ON t.id = s.template_id
+  JOIN cohort co ON co.id = s.candidate_id
+  JOIN scope_jobs sj ON sj.id = t.job_id
+ WHERE jsonb_typeof(rp.dim_scores) = 'array'
+   AND jsonb_array_length(rp.dim_scores) > 0
+ ORDER BY s.candidate_id, rp.created_at DESC
+"""
+
+_DIM_SQL_OFFLINE = _CTE + """
+SELECT DISTINCT ON (o.candidate_id)
+       o.candidate_id::text AS cid,
+       o.dim_scores          AS dims,
+       o.ai_dim_scores       AS ai_dims,
+       o.comment             AS comment,
+       o.ai_comment          AS ai_comment,
+       o.score               AS score,
+       o.ai_score            AS ai_score,
+       o.decision            AS decision,
+       o.source              AS source,
+       coalesce(o.scored_at, o.created_at) AS at
+  FROM offline_interviews o
+  JOIN cohort co ON co.id = o.candidate_id
+  JOIN scope_jobs sj ON sj.id = o.job_id
+ WHERE jsonb_array_length(
+         CASE WHEN jsonb_typeof(o.dim_scores) = 'array' THEN o.dim_scores
+              WHEN jsonb_typeof(o.ai_dim_scores) = 'array' THEN o.ai_dim_scores
+              ELSE '[]'::jsonb END) > 0
+ ORDER BY o.candidate_id, coalesce(o.scored_at, o.created_at) DESC
+"""
+
+# 候选人的岗位 / 综合素质来源（汇总优先，到店直招回落到线下复试）
+_DIM_SQL_META = """
+SELECT c.id::text AS cid,
+       c.name     AS name,
+       m.job_id::text AS m_job_id, j.title AS m_job_title,
+       m.final_score  AS final_score, m.final_verdict AS final_verdict,
+       m.stage AS stage, m.summary AS summary,
+       o.job_id::text AS o_job_id, oj.title AS o_job_title,
+       o.score AS o_score, o.ai_score AS o_ai_score,
+       o.decision AS o_decision, o.source AS o_source
+  FROM candidates c
+  LEFT JOIN LATERAL (
+        SELECT mm.job_id, mm.final_score, mm.final_verdict, mm.stage, mm.summary
+          FROM recruitment_summaries mm
+          JOIN job_postings jj ON jj.id = mm.job_id
+         WHERE mm.candidate_id = c.id
+           AND (%(scope_all)s::boolean OR NOT (jj.title LIKE ANY(%(test_patterns)s::text[])))
+         ORDER BY mm.snapshot_at DESC
+         LIMIT 1
+      ) m ON TRUE
+  LEFT JOIN job_postings j ON j.id = m.job_id
+  LEFT JOIN LATERAL (
+        SELECT oo.job_id, oo.score, oo.ai_score, oo.decision, oo.source
+          FROM offline_interviews oo
+          JOIN job_postings oj2 ON oj2.id = oo.job_id
+         WHERE oo.candidate_id = c.id
+           AND (%(scope_all)s::boolean OR NOT (oj2.title LIKE ANY(%(test_patterns)s::text[])))
+         ORDER BY coalesce(oo.scored_at, oo.created_at) DESC
+         LIMIT 1
+      ) o ON TRUE
+  LEFT JOIN job_postings oj ON oj.id = o.job_id
+ WHERE c.id = ANY(%(cids)s::uuid[])
+"""
+
+
+def _map_dim_key(stage: str, key: str, name: str, cfg: dict) -> str | None:
+    """把某环节的维度标识归并到标准维度 key；归并不上返回 None（落「其他」）。"""
+    k = (key or "").strip()
+    nm = (name or "").strip()
+    mapped = (cfg.get("stage_key_map") or {}).get(stage) or {}
+    if k and k in mapped:
+        return mapped[k]
+    alias = cfg.get("name_alias") or {}
+    for canon, words in alias.items():
+        for word in words or []:
+            if word and (word in nm or word in k):
+                return canon
+    return None
+
+
+def _normalize_dims(stage_dims: dict, cfg: dict) -> dict:
+    """把各环节原始维度分归并、加权成统一维度匹配度（纯函数，便于单测）。
+
+    Args:
+        stage_dims: ``{"screening": [...], "ai": [...], "offline": [...]}``，
+            每项是该环节最新一条记录的 ``dim_scores`` 列表。
+        cfg: dim_config.json 的内容。
+
+    Returns:
+        ``{"dims": {canon: 0~100|None}, "evidence": {canon: {stage: 0~100}}, "other": [...]}``
+        - ``dims``：跨环节加权匹配度（仅统计该维度有分的环节，全缺失记 None）；
+        - ``evidence``：各环节对该维度的贡献（便于弹层下钻）；
+        - ``other``：归并不上的原始维度，显式保留不丢弃。
+    """
+    canon_keys = [c.get("key") for c in (cfg.get("canonical") or [])]
+    weights = cfg.get("stage_weight") or {}
+    acc: dict[str, list[float]] = {c: [0.0, 0.0] for c in canon_keys}
+    evidence: dict[str, dict] = {c: {} for c in canon_keys}
+    other: list[dict] = []
+
+    for stage, dims in (stage_dims or {}).items():
+        w = float(weights.get(stage) or 0)
+        for d in dims or []:
+            if not isinstance(d, dict):
+                continue
+            key = str(d.get("key") or "")
+            name = str(d.get("name") or key)
+            try:
+                score = float(d.get("score"))
+            except (TypeError, ValueError):
+                continue
+            raw_max = d.get("max_score")
+            try:
+                mx = float(raw_max) if raw_max not in (None, "") else 10.0
+            except (TypeError, ValueError):
+                mx = 10.0
+            if mx <= 0:
+                mx = 10.0
+            pct = max(0.0, min(100.0, score / mx * 100.0))
+
+            canon = _map_dim_key(stage, key, name, cfg)
+            if canon is None or canon not in acc:
+                other.append({"stage": stage, "name": name or key, "score": round(pct, 1)})
+                continue
+            acc[canon][0] += pct * w
+            acc[canon][1] += w
+            evidence[canon][stage] = round(pct, 1)
+
+    dims: dict[str, float | None] = {}
+    for c in canon_keys:
+        weighted_sum, weight_sum = acc[c]
+        dims[c] = round(weighted_sum / weight_sum, 1) if weight_sum > 0 else None
+    return {"dims": dims, "evidence": evidence, "other": other}
+
+
+def _truncate(text: Any, limit: int = 220) -> str:
+    s = str(text or "").strip().replace("\n", " ")
+    return s if len(s) <= limit else s[:limit] + "…"
+
+
+def _q_dim_panel(conn, p, limit: int = 40) -> tuple[list[dict], dict]:
+    """候选人维度匹配画像 + 岗位维度均值基准。
+
+    返回 ``(rows, baseline)``：
+      - rows：按最近活动倒序的候选人画像（上限 ``limit``）；
+      - baseline：``job_id -> {job_title, sample, dims}``，用于弹层雷达叠加岗位均值。
+    """
+    stage_sources: dict[str, dict[str, dict]] = {}
+    for stage, sql in (("screening", _DIM_SQL_SCREEN),
+                       ("ai", _DIM_SQL_AI),
+                       ("offline", _DIM_SQL_OFFLINE)):
+        stage_sources[stage] = {r["cid"]: r for r in _rows(conn, sql, p)}
+
+    cids = sorted({cid for recs in stage_sources.values() for cid in recs})
+    if not cids:
+        return [], {}
+
+    meta_rows = {r["cid"]: r for r in _rows(conn, _DIM_SQL_META, {**p, "cids": cids})}
+
+    rows: list[dict] = []
+    for cid in cids:
+        stage_dims: dict[str, list] = {}
+        latest_at = None
+        for stage in ("screening", "ai", "offline"):
+            rec = stage_sources[stage].get(cid)
+            if not rec:
+                continue
+            dims = rec.get("dims") if isinstance(rec.get("dims"), list) else []
+            if stage == "offline" and not dims:
+                # 人工维度缺失时回落到 AI 参考分（后端 offline.py 同口径）
+                dims = rec.get("ai_dims") if isinstance(rec.get("ai_dims"), list) else []
+            if not dims:
+                continue
+            stage_dims[stage] = dims
+            at = rec.get("at")
+            if at is not None and (latest_at is None or at > latest_at):
+                latest_at = at
+        if not stage_dims:
+            continue
+
+        norm = _normalize_dims(stage_dims, DIM_CONFIG)
+        meta = meta_rows.get(cid) or {}
+
+        is_walk_in = not meta.get("m_job_id") and bool(meta.get("o_job_id"))
+        offline_rec = stage_sources["offline"].get(cid) or {}
+
+        # 综合素质：汇总口径优先；到店直招无汇总则回落到线下复试分
+        if meta.get("final_score") is not None:
+            composite = _num(meta["final_score"])
+            verdict = meta.get("final_verdict") or _verdict_from_score(composite)
+            stage = meta.get("stage") or ""
+        else:
+            raw = offline_rec.get("score")
+            if raw is None:
+                raw = offline_rec.get("ai_score")
+            composite = _num(raw)
+            decision = (offline_rec.get("decision") or "").strip()
+            verdict = _verdict_from_score(composite)
+            if not verdict and decision in ("pass", "hold", "reject"):
+                verdict = {"pass": "推荐", "hold": "待定", "reject": "不推荐"}[decision]
+            stage = "walk_in" if (is_walk_in or offline_rec.get("source") == "walk_in") else "offline_done"
+
+        # 综合总评：确定性拼接（不调 LLM）
+        parts: list[str] = []
+        if stage == "walk_in":
+            parts.append("到店直招，仅线下复试。")
+        m_summary = _truncate(meta.get("summary"), 200)
+        if m_summary:
+            parts.append(m_summary)
+        scr_sum = _truncate((stage_sources["screening"].get(cid) or {}).get("summary"), 200)
+        if scr_sum:
+            parts.append(f"简历初筛：{scr_sum}")
+        ai_sum = _truncate((stage_sources["ai"].get(cid) or {}).get("summary"), 200)
+        if ai_sum:
+            parts.append(f"AI 面试：{ai_sum}")
+        off_comment = _truncate(offline_rec.get("comment"), 200) or _truncate(
+            offline_rec.get("ai_comment"), 200
+        )
+        if off_comment:
+            parts.append(f"线下复试：{off_comment}")
+
+        rated = [(k, v) for k, v in norm["dims"].items() if v is not None]
+        best = worst = None
+        # 只有评出 ≥2 个维度时，「最佳 / 最差」才有区分意义
+        if len(rated) >= 2:
+            best = max(rated, key=lambda kv: kv[1])
+            worst = min(rated, key=lambda kv: kv[1])
+            parts.append(
+                f"表现最佳：{DIM_NAMES.get(best[0], best[0])}（{best[1]}）；"
+                f"需重点关注：{DIM_NAMES.get(worst[0], worst[0])}（{worst[1]}）。"
+            )
+
+        job_id = meta.get("m_job_id") or meta.get("o_job_id") or ""
+        job_title = meta.get("m_job_title") or meta.get("o_job_title") or "—"
+        source = offline_rec.get("source") or ""
+        rows.append(
+            {
+                "candidate_id": cid,
+                "candidate_name": meta.get("name") or "—",
+                "job_id": job_id,
+                "job_title": job_title,
+                "dims": norm["dims"],
+                "evidence": norm["evidence"],
+                "other": norm["other"],
+                "dim_count": len(rated),
+                "composite": composite,
+                "verdict": verdict,
+                "stage": stage,
+                "source_label": "到店直招" if source == "walk_in" else "线上投递",
+                "summary": " ".join(parts),
+                "best": {"key": best[0], "name": DIM_NAMES.get(best[0], best[0]), "score": best[1]} if best else None,
+                "worst": {"key": worst[0], "name": DIM_NAMES.get(worst[0], worst[0]), "score": worst[1]} if worst else None,
+                "at": latest_at.astimezone(CN_TZ).strftime("%m-%d %H:%M") if latest_at else "",
+                "_sort": latest_at.timestamp() if latest_at else 0.0,
+            }
+        )
+
+    rows.sort(key=lambda r: r["_sort"], reverse=True)
+    rows = rows[:limit]
+
+    # 岗位维度均值基准（按入选候选人的主岗位分组）
+    by_job: dict[str, dict] = {}
+    for r in rows:
+        jid = r.get("job_id")
+        if not jid:
+            continue
+        bucket = by_job.setdefault(jid, {"job_title": r.get("job_title") or "—", "ids": set(), "dims": {k: [] for k in DIM_KEYS}})
+        bucket["ids"].add(r["candidate_id"])
+        for k in DIM_KEYS:
+            v = (r.get("dims") or {}).get(k)
+            if v is not None:
+                bucket["dims"][k].append(v)
+    baseline = {
+        jid: {
+            "job_title": b["job_title"],
+            "sample": len(b["ids"]),
+            "dims": {k: (round(sum(vs) / len(vs), 1) if vs else None) for k, vs in b["dims"].items()},
+        }
+        for jid, b in by_job.items()
+    }
+
+    for r in rows:
+        r.pop("_sort", None)
+    return rows, baseline
+
+
 # ── 组装 ─────────────────────────────────────────────────────
 
 
@@ -1249,6 +1640,7 @@ def build_dashboard(days: int, scope: str) -> dict:
         activity = _q_activity(conn, params)
         team = _q_team_activity(conn, params)
         interview_qa = _q_interview_qa(conn, params)
+        candidate_dims, job_dim_baseline = _q_dim_panel(conn, params)
 
     # 到店直招没有汇总行，单独查出来合并进明细（问答列才有入口）
     recent = _merge_recent(recent, recent_walkin)
@@ -1306,6 +1698,9 @@ def build_dashboard(days: int, scope: str) -> dict:
         "recent": recent,
         "activity": activity,
         "interview_qa": interview_qa,
+        "candidate_dims": candidate_dims,
+        "job_dim_baseline": job_dim_baseline,
+        "dim_axes": DIM_AXES,
         "team": team,
         "team_summary": {
             "total": len(team),

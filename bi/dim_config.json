@@ -1,0 +1,44 @@
+{
+  "note": "「候选人维度匹配度」的归并与权重唯一配置入口。各环节沉淀的 dim_scores key 并不统一（简历初筛用 skill_match/experience，AI 面试用模板自定义 rubric，线下复试用 job_match/communication），这里定义它们如何归并到统一维度。改本文件即可调整口径，无需改代码。",
+  "canonical": [
+    {"key": "job_match", "name": "岗位匹配"},
+    {"key": "communication", "name": "沟通表达"},
+    {"key": "attitude", "name": "工作态度"},
+    {"key": "stability", "name": "稳定性"}
+  ],
+  "stage_key_map": {
+    "screening": {
+      "skill_match": "job_match",
+      "experience": "job_match",
+      "stability": "stability",
+      "attitude": "attitude"
+    },
+    "ai": {
+      "job_fit": "job_match",
+      "tech_depth": "job_match",
+      "experience": "job_match",
+      "communication": "communication",
+      "attitude": "attitude",
+      "culture_fit": "attitude",
+      "stability": "stability"
+    },
+    "offline": {
+      "job_match": "job_match",
+      "communication": "communication",
+      "attitude": "attitude",
+      "service": "attitude",
+      "stability": "stability"
+    }
+  },
+  "name_alias": {
+    "job_match": ["技能匹配", "经验相关", "岗位匹配", "技术深度", "项目经验", "专业能力", "匹配"],
+    "communication": ["沟通表达", "沟通", "表达"],
+    "attitude": ["工作态度", "素质与态度", "态度", "服务意识", "文化契合", "责任心"],
+    "stability": ["稳定性", "任职稳定"]
+  },
+  "stage_weight": {
+    "screening": 0.2,
+    "ai": 0.4,
+    "offline": 0.4
+  }
+}
