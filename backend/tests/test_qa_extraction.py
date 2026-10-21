@@ -2,6 +2,7 @@
 
 覆盖：
 - ``answer_quotes``（候选人关键原话）的解析与截断上限；
+- ``risks`` / ``overall_risks``（风险点）的解析、截断与向后兼容；
 - 历史 LLM 输出缺该字段时的向后兼容（返回空数组而非报错）；
 - 脏值过滤（非列表 / 空串 / 无问题的条目）；
 - 空逐字稿短路（不打 LLM）、LLM 异常降级为空结果；
@@ -57,6 +58,50 @@ def test_prompt_asks_for_quotes():
     assert "原话" in qe.QA_EXTRACTION_PROMPT
 
 
+# ── 风险点 ──────────────────────────────────────────────────
+def test_risks_parsed_and_capped_at_three():
+    """每条问答的风险点最多保留 3 条，原始顺序不变。"""
+    raw = """{"questions": [{"question": "之前做过餐饮吗？",
+        "answer_summary": "做过三个月服务员。",
+        "risks": ["只做过 3 个月，经验偏短", "没做过后厨", "离职原因含糊", "第四条应被截断"]}],
+        "overall": "经验一般",
+        "overall_risks": "经验年限不足以独立顶岗"}"""
+    qa = _coerce(raw)
+    item = qa["questions"][0]
+    assert item["risks"] == ["只做过 3 个月，经验偏短", "没做过后厨", "离职原因含糊"]
+    assert qa["overall_risks"] == "经验年限不足以独立顶岗"
+
+
+def test_missing_risks_is_backward_compatible():
+    """v1 prompt 的输出没有 risks / overall_risks，解析后补空值而非报错。"""
+    raw = '{"questions": [{"question": "能上夜班吗？", "answer_summary": "可以", "highlights": ["配合度高"]}], "overall": "还行"}'
+    qa = _coerce(raw)
+    assert qa["questions"][0]["risks"] == []
+    assert qa["overall_risks"] == ""
+    assert qa["questions"][0]["highlights"] == ["配合度高"]
+
+
+def test_dirty_risks_are_dropped():
+    """risks 非列表 / 空串时不污染看板，也不影响同条问答的其他字段。"""
+    raw = """{"questions": [
+        {"question": "期望薪资？", "answer_summary": "6000", "risks": "不是列表"},
+        {"question": "住哪？", "answer_summary": "很远", "risks": ["  ", "通勤 1.5 小时"]}
+    ], "overall_risks": "   "}"""
+    qa = _coerce(raw)
+    assert qa["questions"][0]["risks"] == []
+    assert qa["questions"][1]["risks"] == ["通勤 1.5 小时"]
+    assert qa["overall_risks"] == ""
+    assert qa["questions"][0]["answer_summary"] == "6000"
+
+
+def test_prompt_asks_for_risks_without_hallucination():
+    """prompt 必须要求风险点，并明确「没风险就返回空」，否则模型会硬凑。"""
+    assert "risks" in qe.QA_EXTRACTION_PROMPT
+    assert "overall_risks" in qe.QA_EXTRACTION_PROMPT
+    assert "风险" in qe.QA_EXTRACTION_PROMPT
+    assert "不要为凑数编造" in qe.QA_EXTRACTION_PROMPT
+
+
 # ── 降级 ----------------------------------------------------
 def test_empty_transcript_short_circuits_without_llm(monkeypatch):
     """空逐字稿直接返回空结果，不触发 LLM 调用（省钱且避免无意义请求）。"""
@@ -65,7 +110,7 @@ def test_empty_transcript_short_circuits_without_llm(monkeypatch):
         raise AssertionError("空逐字稿不应调用 LLM")
 
     monkeypatch.setattr(qe, "get_llm", _boom)
-    assert qe.extract_interview_qa("   ") == {"questions": [], "overall": ""}
+    assert qe.extract_interview_qa("   ") == {"questions": [], "overall": "", "overall_risks": ""}
 
 
 def test_llm_failure_degrades_to_empty(monkeypatch):
@@ -75,7 +120,11 @@ def test_llm_failure_degrades_to_empty(monkeypatch):
         raise RuntimeError("llm down")
 
     monkeypatch.setattr(qe, "get_llm", _boom)
-    assert qe.extract_interview_qa("面试官：你好\n候选人：你好") == {"questions": [], "overall": ""}
+    assert qe.extract_interview_qa("面试官：你好\n候选人：你好") == {
+        "questions": [],
+        "overall": "",
+        "overall_risks": "",
+    }
 
 
 # ── 轮询器接线 ───────────────────────────────────────────────

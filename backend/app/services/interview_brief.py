@@ -10,7 +10,8 @@
   复试可能是 100 分制，AI 报告与 AI 参考分本身已是 10 分制。
 - **每条结论都带 ``source``**（出处），老板能判断该信哪条、终试该追问什么。
 - 线下复试的 ``qa_extract``（逐字稿问答）按既有约定只归数据看板消费，这里
-  **仅取派生结论**（问答亮点 → 优点、未答清的问题 → 待确认），不返回问答全文。
+  **仅取派生结论**（问答亮点 → 优点、问答风险 → 风险、未答清的问题 → 待确认），
+  不返回问答全文。
 
 数据取用顺序：汇总快照里的 ``detail.*_id`` → 实时查那条记录；查不到再按
 ``(job_id, candidate_id)`` 兜底取最近一条，避免快照字段为空时档案整块缺失。
@@ -454,6 +455,9 @@ def build_interview_brief(db: Session, summary: RecruitmentSummary) -> dict[str,
                 continue
             for text in _clean_list(item.get("highlights"), limit=2):
                 strengths.append({"text": text, "source": "复试问答"})
+            # 逐字稿风险点 → 档案风险（老板/HR 复核时直接看得到，不必再翻看板）
+            for text in _clean_list(item.get("risks"), limit=2):
+                risks.append({"text": text, "source": "复试问答"})
             question = str(item.get("question") or "").strip()
             answered = str(item.get("answer_summary") or "").strip()
             if question and not answered:

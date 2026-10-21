@@ -78,8 +78,12 @@ def _run_one(db, row: OfflineInterview) -> dict:
             print(f"       原话：{' / '.join(item['answer_quotes'])}")
         if item.get("highlights"):
             print(f"       亮点：{'；'.join(item['highlights'])}")
+        if item.get("risks"):
+            print(f"       风险：{'；'.join(item['risks'])}")
     if qa.get("overall"):
         print(f"    总述：{qa['overall']}")
+    if qa.get("overall_risks"):
+        print(f"    需复核风险：{qa['overall_risks']}")
     return qa
 
 

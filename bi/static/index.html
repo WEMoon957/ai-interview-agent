@@ -354,7 +354,7 @@
   .heat-cell{flex:1;height:7px;border-radius:2px;background:rgba(255,255,255,.06);transition:background .2s}
   .heat-cell.on{background:var(--status-color,var(--green));opacity:.92}
 
-  /* ── 面试录音问答（点击一行看问题 / 回答亮点）── */
+  /* ── 面试录音问答（点击一行看问题 / 回答亮点 / 风险点）── */
   .qa-list{display:flex;flex-direction:column;gap:8px;max-height:430px;overflow:auto}
   .qa-row{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;
     padding:10px 13px;border-radius:11px;cursor:pointer;text-align:left;
@@ -363,6 +363,10 @@
     transition:background .18s,border-color .18s,transform .12s}
   .qa-row:hover{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.4)}
   .qa-row:active{transform:scale(.995)}
+  /* 有风险点：左边框转红，扫一眼就能挑出要复核的人 */
+  .qa-row.has-risk{border-left-color:var(--red)}
+  .qa-row.has-risk:hover{background:rgba(248,113,113,.07);border-color:rgba(248,113,113,.4)}
+  .qa-tags{display:inline-flex;align-items:center;gap:6px}
   .qa-main{min-width:0}
   .qa-name{display:block;font-size:var(--fs-3);font-weight:600;color:#e8eefc;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -370,6 +374,8 @@
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .qa-count{font-size:var(--fs-1);color:#fcd34d;background:rgba(251,191,36,.14);
     border:1px solid rgba(251,191,36,.28);padding:2px 9px;border-radius:999px;white-space:nowrap}
+  .qa-risk-n{font-size:var(--fs-1);color:#fca5a5;background:rgba(248,113,113,.13);
+    border:1px solid rgba(248,113,113,.32);padding:2px 9px;border-radius:999px;white-space:nowrap}
   .qa-go{color:var(--dim);font-size:var(--fs-5);line-height:1}
 
   /* 问答弹层 */
@@ -399,6 +405,18 @@
   .qa-hl span{font-size:var(--fs-1);line-height:1.7;padding:2px 9px;border-radius:999px;
     background:rgba(52,211,153,.13);color:#6ee7b7;border:1px solid rgba(52,211,153,.28)}
   .qa-hl .qa-hl-l{background:transparent;border:0;color:var(--dim);padding:0}
+  /* 风险点：每条独占一行（带依据，chip 太窄读不下），左侧红色标记 */
+  .qa-risk{margin:9px 0 0 22px;display:flex;flex-direction:column;gap:4px;
+    padding:8px 11px;border-radius:9px;background:rgba(248,113,113,.06);
+    border-left:2px solid rgba(248,113,113,.5)}
+  .qa-risk .qa-risk-l{font-size:var(--fs-1);font-weight:600;color:#fca5a5}
+  .qa-risk p{margin:0;font-size:var(--fs-2);line-height:1.65;color:#efc9c9}
+  /* 整场风险提示（放在整体表现下方） */
+  .qa-overall-risk{background:rgba(248,113,113,.09);border-color:rgba(248,113,113,.26);color:#f2d2d2}
+  .qa-overall-risk b{color:#fca5a5}
+  /* 旧版抽取（无风险维度）提示 */
+  .qa-stale{font-size:var(--fs-1);line-height:1.6;color:#cbb68b;background:rgba(251,191,36,.06);
+    border:1px dashed rgba(251,191,36,.26);border-radius:9px;padding:8px 11px}
   /* 候选人原话（保留口语，用引号包住） */
   .qa-quotes{margin:9px 0 0 22px;display:flex;flex-wrap:wrap;align-items:baseline;gap:7px 8px}
   .qa-quotes .qa-quotes-l{flex:none;font-size:var(--fs-1);color:var(--dim)}
@@ -725,7 +743,7 @@
     </section>
 
     <section class="panel span-12" style="--rule-accent:var(--amber)" aria-label="面试录音问答" data-view="ops">
-      <h2>面试录音问答<span class="hint">点击一行查看「问了什么 · 回答亮点」</span></h2>
+      <h2>面试录音问答<span class="hint">点击一行查看「问了什么 · 回答亮点 · 风险点」</span></h2>
       <div class="qa-list" id="qaList"><div class="state is-loading">加载中…</div></div>
     </section>
 
@@ -1422,7 +1440,7 @@
         <td>${r.verdict ? `<span class="tag ${vc}">${r.verdict}</span>` : '<span class="na">—</span>'}</td>
         <td><span class="tag n">${STAGE_LABEL[r.stage] || '其他状态'}</span></td>
         <td>${r.has_qa
-          ? `<button class="qa-btn" type="button" data-candidate="${esc(r.candidate_id)}" title="查看该候选人的面试问答">${r.qa_count ? r.qa_count + ' 问' : '查看'}</button>`
+          ? `<span class="qa-tags"><button class="qa-btn" type="button" data-candidate="${esc(r.candidate_id)}" title="查看该候选人的面试问答（含风险点）">${r.qa_count ? r.qa_count + ' 问' : '查看'}</button>${r.risk_count ? `<span class="qa-risk-n" title="该候选人面试回答中抽取到 ${r.risk_count} 处风险点">${r.risk_count} 风险</span>` : ''}</span>`
           : '<span class="na">—</span>'}</td>
         <td class="ts">${r.snapshot_at || '—'}</td>
       </tr>`
@@ -1544,7 +1562,7 @@
     renderStore(d)
   }
 
-  // ── 面试录音问答（点击一行查看「问题 + 回答亮点」）──
+  // ── 面试录音问答（点击一行查看「问题 + 回答亮点 + 风险点」）──
   // 数据来自后端抽取并落库的 offline_interviews.qa_extract（业务系统不展示，仅看板消费）。
   function renderInterviewQa(d) {
     state.qaRows = (d && d.interview_qa) || []
@@ -1555,12 +1573,15 @@
       return
     }
     box.innerHTML = state.qaRows.map((r, i) => `
-      <button class="qa-row" type="button" data-qa="${i}">
+      <button class="qa-row${r.risk_count ? ' has-risk' : ''}" type="button" data-qa="${i}">
         <span class="qa-main">
           <span class="qa-name">${esc(r.candidate_name)}</span>
           <span class="qa-sub">${esc(r.job_title)} · ${esc(r.source_label)} · 面试官 ${esc(r.interviewer)} · ${esc(r.at)}</span>
         </span>
-        <span class="qa-count">${r.question_count} 问</span>
+        <span class="qa-tags">
+          <span class="qa-count">${r.question_count} 问</span>
+          ${r.risk_count ? `<span class="qa-risk-n" title="该场面试抽取到 ${r.risk_count} 处风险点，点开查看">${r.risk_count} 处风险</span>` : ''}
+        </span>
         <span class="qa-go" aria-hidden="true">›</span>
       </button>`).join('')
   }
@@ -1572,6 +1593,14 @@
     $('qaModalMeta').textContent = `${r.job_title} · ${r.source_label} · 面试官 ${r.interviewer} · ${r.at}`
     const qs = r.questions || []
     const overall = r.overall ? `<div class="qa-overall"><b>整体表现</b>${esc(r.overall)}</div>` : ''
+    // 整场风险汇总：放在整体表现下方，先看风险再逐题复盘
+    const overallRisk = r.overall_risks
+      ? `<div class="qa-overall qa-overall-risk"><b>需复核风险</b>${esc(r.overall_risks)}</div>`
+      : ''
+    // 旧版抽取没有 risks 维度：明确提示「未含风险点」，避免被误读成「本场无风险」
+    const stale = (r.has_risk_data === false)
+      ? '<div class="qa-stale">该记录为旧版抽取结果，未包含风险点维度。重抽这条记录后即可补齐（scripts/extract_interview_qa.py --all --force）。</div>'
+      : ''
     const pairs = qs.map((q, idx) => {
       const quotes = (q.answer_quotes && q.answer_quotes.length)
         ? `<div class="qa-quotes"><span class="qa-quotes-l">原话</span>${q.answer_quotes.map((t) => `<span>「${esc(t)}」</span>`).join('')}</div>`
@@ -1579,14 +1608,18 @@
       const hls = (q.highlights && q.highlights.length)
         ? `<div class="qa-hl"><span class="qa-hl-l">回答亮点</span>${q.highlights.map((h) => `<span>${esc(h)}</span>`).join('')}</div>`
         : ''
+      const risks = (q.risks && q.risks.length)
+        ? `<div class="qa-risk"><span class="qa-risk-l">⚠ 风险点</span>${q.risks.map((k) => `<p>${esc(k)}</p>`).join('')}</div>`
+        : ''
       return `<div class="qa-pair">
         <div class="qa-q"><span class="qa-i">Q${idx + 1}</span><span>${esc(q.question)}</span></div>
         <div class="qa-a">${esc(q.answer_summary)}</div>
         ${quotes}
         ${hls}
+        ${risks}
       </div>`
     }).join('')
-    $('qaModalBody').innerHTML = overall + (pairs || '<div class="state">该记录未抽取到问答</div>')
+    $('qaModalBody').innerHTML = overall + overallRisk + stale + (pairs || '<div class="state">该记录未抽取到问答</div>')
     $('qaModal').hidden = false
     document.body.style.overflow = 'hidden'
   }

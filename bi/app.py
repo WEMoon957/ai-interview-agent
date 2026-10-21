@@ -968,14 +968,20 @@ def _q_recent(conn, p, limit: int = 25) -> list[dict]:
            m.final_verdict                AS verdict,
            m.stage                        AS stage,
            m.snapshot_at                  AS snapshot_at,
-           coalesce(qa.n, 0)              AS qa_count
+           coalesce(qa.n, 0)              AS qa_count,
+           coalesce(qa.risk_n, 0)         AS risk_count
       FROM recruitment_summaries m
       JOIN job_postings j ON j.id = m.job_id
       JOIN cohort co ON co.id = m.candidate_id
       JOIN scope_jobs sj ON sj.id = m.job_id
-      -- 该候选人已抽取的问答条数：有则可从明细直接点开「问了什么 / 怎么回答」
+      -- 该候选人已抽取的问答条数 / 风险点数：有则可从明细直接点开「问了什么 / 怎么回答 / 风险在哪」
       LEFT JOIN LATERAL (
-            SELECT coalesce(sum(jsonb_array_length(oi.qa_extract -> 'questions')), 0)::int AS n
+            SELECT coalesce(sum(jsonb_array_length(oi.qa_extract -> 'questions')), 0)::int AS n,
+                   coalesce(sum(
+                       (SELECT coalesce(sum(jsonb_array_length(q -> 'risks')), 0)
+                          FROM jsonb_array_elements(oi.qa_extract -> 'questions') q
+                         WHERE jsonb_typeof(q -> 'risks') = 'array')
+                   ), 0)::int AS risk_n
               FROM offline_interviews oi
              WHERE oi.candidate_id = co.id
                AND jsonb_typeof(oi.qa_extract -> 'questions') = 'array'
@@ -1002,6 +1008,7 @@ def _q_recent(conn, p, limit: int = 25) -> list[dict]:
                 "snapshot_at": (snap.astimezone(CN_TZ).strftime("%m-%d %H:%M") if snap else ""),
                 "has_qa": qa_count > 0,
                 "qa_count": qa_count,
+                "risk_count": _int(r["risk_count"]) or 0,
             }
         )
     return out
@@ -1025,7 +1032,12 @@ def _q_walkin_qa(conn, p, limit: int = 25) -> list[dict]:
            max(coalesce(o.qa_extracted_at, o.transcript_at, o.created_at)) AS snapshot_at,
            coalesce(sum(CASE WHEN jsonb_typeof(o.qa_extract -> 'questions') = 'array'
                              THEN jsonb_array_length(o.qa_extract -> 'questions')
-                             ELSE 0 END), 0)::int                   AS qa_count
+                             ELSE 0 END), 0)::int                   AS qa_count,
+           coalesce(sum(CASE WHEN jsonb_typeof(o.qa_extract -> 'questions') = 'array'
+                             THEN (SELECT coalesce(sum(jsonb_array_length(q -> 'risks')), 0)
+                                     FROM jsonb_array_elements(o.qa_extract -> 'questions') q
+                                    WHERE jsonb_typeof(q -> 'risks') = 'array')
+                             ELSE 0 END), 0)::int                   AS risk_count
       FROM offline_interviews o
       JOIN candidates co ON co.id = o.candidate_id
       JOIN job_postings j ON j.id = o.job_id
@@ -1054,6 +1066,7 @@ def _q_walkin_qa(conn, p, limit: int = 25) -> list[dict]:
                 "snapshot_at": (snap.astimezone(CN_TZ).strftime("%m-%d %H:%M") if snap else ""),
                 "has_qa": qa_count > 0,
                 "qa_count": qa_count,
+                "risk_count": _int(r["risk_count"]) or 0,
             }
         )
     return out
@@ -1217,13 +1230,16 @@ def _q_team_activity(conn, p) -> list[dict]:
 
 
 def _q_interview_qa(conn, p, limit: int = 50) -> list[dict]:
-    """面试录音结构化问答（面试官问题 + 候选人回答亮点）—— 明细「点击查看」用。
+    """面试录音结构化问答（面试官问题 + 回答亮点 + 风险点）—— 明细「点击查看」用。
 
     口径：只看**已抽取过问答**（``offline_interviews.qa_extract`` 非空）的线下复试记录。
 
     刻意**不接 cohort 漏斗口径**：到店直招候选人不一定有 ``recruitment_summaries`` 汇总，
     若按汇总表关联会漏掉这批人；这里独立成查询，只看「有没有抽取结果」。
     ``scope=real`` 时同样按岗位名排除联调/演示数据。
+
+    风险点（``risks`` / ``overall_risks``）是 v2 抽取新增字段：老记录没有这两个键，
+    此时 ``has_risk_data=False``，前端提示可重抽，不把「无数据」误当成「无风险」。
     """
     sql = """
     SELECT o.id::text                                              AS id,
@@ -1250,6 +1266,31 @@ def _q_interview_qa(conn, p, limit: int = 50) -> list[dict]:
         raw_qs = qa.get("questions")
         questions = raw_qs if isinstance(raw_qs, list) else []
         at = r["at"]
+        # v2 抽取才带风险维度；老记录两个键都不存在 → 标记出来供前端提示「未含风险点」
+        has_risk_data = "overall_risks" in qa or any(
+            isinstance(q, dict) and "risks" in q for q in questions
+        )
+        items = [
+            {
+                "question": str(q.get("question") or "").strip(),
+                "answer_summary": str(q.get("answer_summary") or "").strip(),
+                "answer_quotes": [
+                    str(t).strip()
+                    for t in (q.get("answer_quotes") or [])
+                    if str(t).strip()
+                ][:3],
+                "highlights": [
+                    str(h).strip()
+                    for h in (q.get("highlights") or [])
+                    if str(h).strip()
+                ],
+                "risks": [
+                    str(k).strip() for k in (q.get("risks") or []) if str(k).strip()
+                ][:3],
+            }
+            for q in questions
+            if isinstance(q, dict)
+        ]
         out.append(
             {
                 "id": r["id"],
@@ -1261,26 +1302,14 @@ def _q_interview_qa(conn, p, limit: int = 50) -> list[dict]:
                 "source_label": "到店直招" if r["source"] == "walk_in" else "线上投递",
                 "transcript_status": r["transcript_status"] or "",
                 "at": at.astimezone(CN_TZ).strftime("%m-%d %H:%M") if at else "",
-                "question_count": len(questions),
+                "question_count": len(items),
+                "risk_count": sum(len(i["risks"]) for i in items),
+                "has_risk_data": has_risk_data,
                 "overall": (qa.get("overall") or "").strip(),
-                "questions": [
-                    {
-                        "question": str(q.get("question") or "").strip(),
-                        "answer_summary": str(q.get("answer_summary") or "").strip(),
-                        "answer_quotes": [
-                            str(t).strip()
-                            for t in (q.get("answer_quotes") or [])
-                            if str(t).strip()
-                        ][:3],
-                        "highlights": [
-                            str(h).strip()
-                            for h in (q.get("highlights") or [])
-                            if str(h).strip()
-                        ],
-                    }
-                    for q in questions
-                    if isinstance(q, dict)
-                ],
+                "overall_risks": (qa.get("overall_risks") or "").strip()
+                if has_risk_data
+                else "",
+                "questions": items,
             }
         )
     return out
