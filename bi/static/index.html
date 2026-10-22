@@ -423,6 +423,19 @@
   .qa-quotes span:not(.qa-quotes-l){font-size:var(--fs-2);line-height:1.7;color:#e6d9b8;
     background:rgba(251,191,36,.07);border-left:2px solid rgba(251,191,36,.5);
     border-radius:0 8px 8px 0;padding:3px 10px}
+  /* AI 面试记录：逐题评分 chip / 追问标记 / 逐题评语 */
+  /* AI 面试记录：沿用问答行样式，但主色换成绿色，避免和「面试录音问答」混淆 */
+  #aiList .qa-row{border-left-color:var(--green)}
+  #aiList .qa-row:hover{background:rgba(52,211,153,.06);border-color:rgba(52,211,153,.38)}
+  #aiList .qa-count{color:#6ee7b7;background:rgba(52,211,153,.13);border-color:rgba(52,211,153,.28)}
+  .qa-fu{flex:none;align-self:center;font-size:var(--fs-1);font-weight:500;color:#93c5fd;
+    background:rgba(79,140,255,.14);border:1px solid rgba(79,140,255,.28);border-radius:999px;padding:0 8px}
+  .qa-scores{margin:9px 0 0 22px;display:flex;flex-wrap:wrap;gap:6px}
+  .qa-scores span{font-size:var(--fs-1);line-height:1.8;color:#c2cde4;padding:1px 9px;border-radius:999px;
+    background:rgba(79,140,255,.1);border:1px solid rgba(79,140,255,.24)}
+  .qa-scores b{color:#e3ebfa;font-weight:700;margin-left:3px}
+  .qa-comment{margin:8px 0 0 22px;font-size:var(--fs-1);line-height:1.7;color:#9fb0cc}
+  .qa-comment b{color:#93b9ff;font-weight:600;margin-right:5px}
   /* 候选人明细表里的「问答」入口 */
   .qa-btn{font:inherit;font-size:var(--fs-1);line-height:1.6;padding:2px 9px;border-radius:999px;cursor:pointer;
     white-space:nowrap;background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3);color:#fcd34d;
@@ -749,6 +762,11 @@
       <div class="qa-list" id="qaList"><div class="state is-loading">加载中…</div></div>
     </section>
 
+    <section class="panel span-12" style="--rule-accent:var(--green)" aria-label="AI 面试记录" data-view="ops">
+      <h2>AI 面试记录<span class="hint" id="aiHint">逐题原话留存 · 点击一行看问答与逐题评分</span></h2>
+      <div class="qa-list" id="aiList"><div class="state is-loading">加载中…</div></div>
+    </section>
+
     <section class="panel span-12" style="--rule-accent:var(--purple)" aria-label="候选人维度匹配" data-view="ops">
       <h2>候选人维度匹配<span class="hint" id="dimHint">统一维度 · 跨环节加权 · 点击一行看画像与综合素质</span></h2>
       <div class="table-wrap">
@@ -805,6 +823,20 @@
       <button class="qa-x" type="button" data-close aria-label="关闭">×</button>
     </div>
     <div class="qa-body" id="qaModalBody"></div>
+  </div>
+</div>
+
+<div class="qa-modal" id="aiModal" hidden>
+  <div class="qa-mask" data-ai-close></div>
+  <div class="qa-card" role="dialog" aria-modal="true" aria-label="AI 面试记录详情">
+    <div class="qa-head">
+      <div>
+        <h3 id="aiModalTitle">AI 面试记录</h3>
+        <p class="qa-meta" id="aiModalMeta"></p>
+      </div>
+      <button class="qa-x" type="button" data-ai-close aria-label="关闭">×</button>
+    </div>
+    <div class="qa-body" id="aiModalBody"></div>
   </div>
 </div>
 
@@ -928,6 +960,7 @@
     sortDesc: true,
     query: '',
     qaRows: [],            // 面试问答列表原始行，供点击弹层取用
+    aiRows: [],            // AI 面试场次列表（逐题原话点开再按需加载）
     dimRows: [],           // 候选人维度画像行
     dimAxes: [],           // 统一维度轴（key/name），随 dim_config 变化
     dimBaseline: {},       // job_id -> 岗位维度均值（弹层雷达基准线）
@@ -1647,6 +1680,93 @@
     document.body.style.overflow = ''
   }
 
+  // ── AI 面试记录（逐题原话 + 逐题评分）──────────────────────
+  // 列表来自 /api/dashboard 的 ai_interviews（轻量：得分/题数/状态）；
+  // 点开某场再按需拉 /api/ai-interview?session_id=，避免每次刷新都搬运全量回答原文。
+  function renderAiInterviews(d) {
+    state.aiRows = (d && d.ai_interviews) || []
+    const box = $('aiList')
+    if (!box) return
+    if (!state.aiRows.length) {
+      box.innerHTML = '<div class="state">暂无 AI 面试记录<small>候选人开始作答后，逐题原话会自动留存到这里</small></div>'
+      return
+    }
+    box.innerHTML = state.aiRows.map((r, i) => {
+      const tail = r.status === 'finished'
+        ? (r.score != null ? `${fmtScore(r.score)} 分${r.verdict ? ' · ' + r.verdict : ''}` : (r.verdict || '已完成'))
+        : r.status_label
+      const count = r.turn_count
+        ? `${r.turn_count} 问${r.follow_up_count ? `（含 ${r.follow_up_count} 次追问）` : ''}`
+        : '暂无原话'
+      const dur = r.duration_min != null ? ` · 用时 ${r.duration_min < 1 ? '不足 1' : r.duration_min} 分钟` : ''
+      return `<button class="qa-row" type="button" data-ai="${i}">
+        <span class="qa-main">
+          <span class="qa-name">${esc(r.candidate_name)}</span>
+          <span class="qa-sub">${esc(r.job_title)} · ${esc(r.status_label)} · ${count} · ${esc(r.at)}${dur}</span>
+        </span>
+        <span class="qa-tags"><span class="qa-count">${esc(tail)}</span></span>
+        <span class="qa-go" aria-hidden="true">›</span>
+      </button>`
+    }).join('')
+  }
+
+  function openAi(i) {
+    const r = state.aiRows[i]
+    if (!r) return
+    $('aiModalTitle').textContent = `AI 面试记录 · ${r.candidate_name}`
+    $('aiModalMeta').textContent = [r.job_title, r.status_label, r.at].filter(Boolean).join(' · ')
+    $('aiModalBody').innerHTML = '<div class="state is-loading">加载逐题原话…</div>'
+    $('aiModal').hidden = false
+    document.body.style.overflow = 'hidden'
+    fetch(`/api/ai-interview?session_id=${encodeURIComponent(r.session_id)}`, { credentials: 'same-origin' })
+      .then((res) => res.json())
+      .then((j) => {
+        if (!j || j.code !== 0 || !j.data) throw new Error((j && j.message) || '加载失败')
+        renderAiDetail(j.data)
+      })
+      .catch((err) => {
+        $('aiModalBody').innerHTML = `<div class="state">加载失败<small>${esc(err && err.message ? err.message : String(err))}</small></div>`
+      })
+  }
+
+  function renderAiDetail(d) {
+    $('aiModalTitle').textContent = `AI 面试记录 · ${d.candidate_name}`
+    const meta = [d.job_title, d.status_label]
+    if (d.started_at) meta.push(d.started_at)
+    if (d.duration_min != null) meta.push(`用时 ${d.duration_min < 1 ? '不足 1' : d.duration_min} 分钟`)
+    if (d.score != null) meta.push(`总分 ${fmtScore(d.score)}${d.verdict ? ' · ' + d.verdict : ''}`)
+    $('aiModalMeta').textContent = meta.filter(Boolean).join(' · ')
+
+    const summary = d.summary ? `<div class="qa-overall"><b>AI 面试总评</b>${esc(d.summary)}</div>` : ''
+    const turns = d.turns || []
+    if (!turns.length) {
+      $('aiModalBody').innerHTML = summary + '<div class="state">该场次暂无逐题原话<small>逐题原话留存上线前的历史场次无法补齐；新场次会自动记录</small></div>'
+      return
+    }
+    const pairs = turns.map((t) => {
+      const scores = (t.scores && t.scores.length)
+        ? `<div class="qa-scores">${t.scores
+            .filter((s) => s.score != null)
+            .map((s) => `<span>${esc(s.name)}<b>${Number(s.score).toFixed(1)}</b></span>`)
+            .join('')}</div>`
+        : ''
+      const comment = t.comment ? `<div class="qa-comment"><b>评语</b>${esc(t.comment)}</div>` : ''
+      return `<div class="qa-pair">
+        <div class="qa-q"><span class="qa-i">Q${t.turn_index}</span><span>${esc(t.question || '（问题原文缺失）')}</span>${t.is_follow_up ? '<span class="qa-fu">追问</span>' : ''}</div>
+        <div class="qa-a">${esc(t.answer || '（未作答）')}</div>
+        ${scores}
+        ${comment}
+      </div>`
+    }).join('')
+    $('aiModalBody').innerHTML = summary + pairs
+  }
+
+  function closeAi() {
+    const m = $('aiModal')
+    if (m) m.hidden = true
+    document.body.style.overflow = ''
+  }
+
   // ── 候选人维度匹配（统一维度匹配度 + 综合素质）────────────────
   // 数据来自 /api/dashboard 的 candidate_dims / job_dim_baseline / dim_axes：
   // 后端把「简历初筛 / AI 面试 / 线下复试」各不相同的 dim_scores 归并到统一维度
@@ -2003,6 +2123,7 @@
     renderRecent(d)
     renderFeed(d)
     renderInterviewQa(d)
+    renderAiInterviews(d)
     renderDimPanel(d)
 
     state.lastSuccess = new Date()
@@ -2206,6 +2327,21 @@
     })
   }
 
+  // AI 面试记录：点行按需拉取逐题原话；遮罩 / 关闭按钮 / Esc 关闭
+  const aiListEl = $('aiList')
+  if (aiListEl) {
+    aiListEl.addEventListener('click', (e) => {
+      const row = e.target.closest('[data-ai]')
+      if (row) openAi(Number(row.dataset.ai))
+    })
+  }
+  const aiModalEl = $('aiModal')
+  if (aiModalEl) {
+    aiModalEl.addEventListener('click', (e) => {
+      if (e.target.closest('[data-ai-close]')) closeAi()
+    })
+  }
+
   // 候选人维度匹配：点行打开画像弹层；导出按钮（PDF / Word）
   const dimBodyEl = $('dimBody')
   if (dimBodyEl) {
@@ -2226,7 +2362,7 @@
   if (dimExportPdfEl) dimExportPdfEl.addEventListener('click', exportDimPdf)
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closeQa(); closeDim() }
+    if (e.key === 'Escape') { closeQa(); closeAi(); closeDim() }
   })
 
   // ── 实时通道（SSE）──────────────────────

@@ -42,6 +42,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -1345,6 +1346,191 @@ def _q_interview_qa(conn, p, limit: int = 50) -> list[dict]:
     return out
 
 
+# ── AI 面试记录 ─────────────────────────────────────────────
+#
+# 数据源：interview_sessions（场次）+ session_reports（得分/结论）+ interview_turns（逐题原话）
+# + answer_evaluations（逐题评分，按 question_id 对齐）。
+#
+# 列表只带轻量字段，逐题原话走 /api/ai-interview 点开再查：
+# 回答原文动辄上千字，全量塞进 60 秒刷新的看板负载会让大屏变慢。
+#
+# 只列「真正开始过」的场次（started_at 非空）：HR 发出但候选人没点开的链接不占版面。
+
+AI_STATUS_LABELS = {"pending": "待开始", "running": "面试中", "finished": "已完成"}
+
+
+def _q_ai_interviews(conn, p, limit: int = 25) -> list[dict]:
+    """AI 面试场次列表（最近优先，含得分与题数）。"""
+    sql = """
+    SELECT s.id::text                                   AS session_id,
+           c.id::text                                   AS candidate_id,
+           c.name                                       AS candidate_name,
+           j.title                                      AS job_title,
+           s.status                                     AS status,
+           coalesce(s.started_at, s.created_at)         AS started_at,
+           r.created_at                                 AS finished_at,
+           r.total_score                                AS total_score,
+           r.verdict                                    AS verdict,
+           coalesce(tt.n, 0)                            AS turn_count,
+           coalesce(tt.fu, 0)                           AS follow_up_count
+      FROM interview_sessions s
+      JOIN candidates c ON c.id = s.candidate_id
+      JOIN interview_templates tp ON tp.id = s.template_id
+      JOIN job_postings j ON j.id = tp.job_id
+      LEFT JOIN session_reports r ON r.session_id = s.id
+      LEFT JOIN (
+           SELECT session_id,
+                  count(*)                                AS n,
+                  count(*) FILTER (WHERE is_follow_up)    AS fu
+             FROM interview_turns
+            GROUP BY session_id
+      ) tt ON tt.session_id = s.id
+     WHERE s.started_at IS NOT NULL
+       AND (%(scope_all)s::boolean OR NOT (j.title LIKE ANY(%(test_patterns)s::text[])))
+     ORDER BY coalesce(r.created_at, s.updated_at) DESC
+     LIMIT %(limit)s
+    """
+    out: list[dict] = []
+    for r in _rows(conn, sql, {**p, "limit": limit}):
+        started = r["started_at"]
+        finished = r["finished_at"]
+        at = finished or started
+        duration = None
+        if started and finished:
+            minutes = (finished - started).total_seconds() / 60.0
+            duration = round(minutes) if minutes >= 0 else None
+        status = r["status"] or ""
+        out.append(
+            {
+                "session_id": r["session_id"],
+                "candidate_id": r["candidate_id"],
+                "candidate_name": r["candidate_name"] or "—",
+                "job_title": r["job_title"] or "—",
+                "status": status,
+                "status_label": AI_STATUS_LABELS.get(status, status or "—"),
+                "at": at.astimezone(CN_TZ).strftime("%m-%d %H:%M") if at else "",
+                "turn_count": _int(r["turn_count"]),
+                "follow_up_count": _int(r["follow_up_count"]),
+                "score": _num(r["total_score"]),
+                "verdict": r["verdict"] or "",
+                "duration_min": duration,
+            }
+        )
+    return out
+
+
+def _ai_interview_detail(conn, session_id: str) -> dict | None:
+    """单场 AI 面试详情：逐题原话 + 逐题评分 + 整场结论。"""
+    try:
+        sid = str(uuid.UUID(session_id))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+    head_sql = """
+    SELECT s.id::text              AS session_id,
+           c.name                  AS candidate_name,
+           j.title                 AS job_title,
+           s.status                AS status,
+           s.started_at            AS started_at,
+           r.created_at            AS finished_at,
+           r.total_score           AS total_score,
+           r.verdict               AS verdict,
+           r.summary               AS summary,
+           r.dim_scores            AS dim_scores,
+           tp.rubric               AS rubric
+      FROM interview_sessions s
+      JOIN candidates c ON c.id = s.candidate_id
+      JOIN interview_templates tp ON tp.id = s.template_id
+      JOIN job_postings j ON j.id = tp.job_id
+      LEFT JOIN session_reports r ON r.session_id = s.id
+     WHERE s.id = %(sid)s::uuid
+    """
+    rows = _rows(conn, head_sql, {"sid": sid})
+    if not rows:
+        return None
+    head = rows[0]
+
+    # 维度 key -> 名称：报告里的 dim_scores 是评分时的快照，优先用它；
+    # 没有报告（进行中）才回落当前模板 rubric，避免模板改过名后显示成 key。
+    names: dict[str, str] = {}
+    for d in head.get("dim_scores") or []:
+        if isinstance(d, dict) and d.get("key"):
+            names[str(d["key"])] = str(d.get("name") or d["key"])
+    if not names:
+        for d in head.get("rubric") or []:
+            if isinstance(d, dict) and d.get("key"):
+                names[str(d["key"])] = str(d.get("name") or d["key"])
+
+    turn_sql = """
+    SELECT t.turn_index,
+           t.question_id,
+           t.question_type,
+           t.is_follow_up,
+           t.question_text,
+           t.answer_text,
+           e.scores,
+           e.evidence,
+           e.comment
+      FROM interview_turns t
+      LEFT JOIN LATERAL (
+            SELECT scores, evidence, comment
+              FROM answer_evaluations e
+             WHERE e.session_id = t.session_id
+               AND e.question_id = t.question_id
+             ORDER BY e.created_at DESC
+             LIMIT 1
+      ) e ON TRUE
+     WHERE t.session_id = %(sid)s::uuid
+     ORDER BY t.turn_index
+    """
+    turns: list[dict] = []
+    for t in _rows(conn, turn_sql, {"sid": sid}):
+        raw_scores = t.get("scores") if isinstance(t.get("scores"), dict) else {}
+        turns.append(
+            {
+                "turn_index": _int(t["turn_index"]),
+                "question_id": t["question_id"] or "",
+                "question_type": t["question_type"] or "subjective",
+                "is_follow_up": bool(t["is_follow_up"]),
+                "question": (t["question_text"] or "").strip(),
+                "answer": (t["answer_text"] or "").strip(),
+                "scores": [
+                    {
+                        "key": key,
+                        "name": names.get(key, key),
+                        "score": _num(value),
+                    }
+                    for key, value in raw_scores.items()
+                ],
+                "evidence": t.get("evidence") if isinstance(t.get("evidence"), list) else [],
+                "comment": (t.get("comment") or "").strip(),
+            }
+        )
+
+    started = head["started_at"]
+    finished = head["finished_at"]
+    duration = None
+    if started and finished:
+        minutes = (finished - started).total_seconds() / 60.0
+        duration = round(minutes) if minutes >= 0 else None
+    status = head["status"] or ""
+    return {
+        "session_id": head["session_id"],
+        "candidate_name": head["candidate_name"] or "—",
+        "job_title": head["job_title"] or "—",
+        "status": status,
+        "status_label": AI_STATUS_LABELS.get(status, status or "—"),
+        "started_at": started.astimezone(CN_TZ).strftime("%Y-%m-%d %H:%M") if started else "",
+        "finished_at": finished.astimezone(CN_TZ).strftime("%Y-%m-%d %H:%M") if finished else "",
+        "duration_min": duration,
+        "score": _num(head["total_score"]),
+        "verdict": head["verdict"] or "",
+        "summary": (head["summary"] or "").strip(),
+        "turn_count": len(turns),
+        "turns": turns,
+    }
+
+
 # ── 候选人维度匹配度 ─────────────────────────────────────────
 #
 # 口径：把三个环节（简历初筛 / AI 面试 / 线下复试）各自的 dim_scores 归并到
@@ -1808,6 +1994,7 @@ def build_dashboard(days: int, scope: str) -> dict:
         activity = _q_activity(conn, params)
         team = _q_team_activity(conn, params)
         interview_qa = _q_interview_qa(conn, params)
+        ai_interviews = _q_ai_interviews(conn, params)
         candidate_dims, job_dim_baseline, dim_axes = _q_dim_panel(conn, params)
 
     # 到店直招没有汇总行，单独查出来合并进明细（问答列才有入口）
@@ -1866,6 +2053,7 @@ def build_dashboard(days: int, scope: str) -> dict:
         "recent": recent,
         "activity": activity,
         "interview_qa": interview_qa,
+        "ai_interviews": ai_interviews,
         "candidate_dims": candidate_dims,
         "job_dim_baseline": job_dim_baseline,
         "dim_axes": dim_axes,
@@ -1935,6 +2123,27 @@ def api_dashboard(
         return JSONResponse(
             status_code=500,
             content={"code": 1, "message": f"数据查询失败：{exc}"},
+        )
+    return {"code": 0, "message": "ok", "data": data}
+
+
+@app.get("/api/ai-interview")
+def api_ai_interview(
+    session_id: str = Query(..., min_length=36, max_length=36, description="AI 面试场次 id"),
+):
+    """单场 AI 面试详情（逐题原话 + 逐题评分），供看板弹层按需加载。"""
+    try:
+        with _connect() as conn:
+            data = _ai_interview_detail(conn, session_id)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            status_code=500,
+            content={"code": 1, "message": f"AI 面试详情查询失败：{exc}"},
+        )
+    if data is None:
+        return JSONResponse(
+            status_code=404,
+            content={"code": 1, "message": "未找到该 AI 面试场次"},
         )
     return {"code": 0, "message": "ok", "data": data}
 
@@ -2013,6 +2222,8 @@ _WATCH_TABLES = (
     "interview_sessions",
     "interview_templates",   # 操作台改评分维度后，看板秒级自动补上维度轴
     "session_reports",
+    "interview_turns",       # AI 面试逐题原话
+    "answer_evaluations",    # AI 面试逐题评分
     "offline_interviews",
     "recruitment_summaries",
     "offers",
