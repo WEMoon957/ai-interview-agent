@@ -57,6 +57,9 @@ class _DB:
     def commit(self):
         self.commits += 1
 
+    def rollback(self):
+        self.rollbacks = getattr(self, "rollbacks", 0) + 1
+
     def refresh(self, _row):
         return None
 
@@ -404,3 +407,58 @@ def test_transcribe_all_failed_explains_how_to_share():
     assert "组织内可见" in err
     assert row.transcript_status == "failed"
 
+
+
+# ── 授权落库：scope 超长 / 落库失败 ────────────────────────
+def _token_payload(scope=""):
+    return {
+        "code": 0,
+        "access_token": "u-new",
+        "refresh_token": "ur-new",
+        "expires_in": 7200,
+        "refresh_expires_in": 2592000,
+        "scope": scope,
+    }
+
+
+def test_save_authorization_keeps_long_scope():
+    """飞书 device 授权会把应用已开通权限全列进 scope（可达数千字符），必须原样保存。"""
+    long_scope = " ".join(f"demo:scope{i}:read" for i in range(300))
+    assert len(long_scope) > 1024
+
+    db = _DB()
+    row = ma.save_authorization(
+        db,
+        open_id="ou_a",
+        name="赵江荷",
+        access_token="u-1",
+        refresh_token="ur-1",
+        scope=long_scope,
+        expires_in=7200,
+        refresh_expires_in=2592000,
+        authorized_by="admin001",
+    )
+    assert row.scope == long_scope
+
+
+def test_poll_device_save_failure_returns_readable_error():
+    """落库异常不能裸抛 500，要回一句能看懂的原因（此前 varchar(1024) 就是这么炸的）。"""
+    _seed_session()
+    row = _auth_row(open_id="ou_a", name="赵江荷")
+    db = _DB(row)
+    with (
+        patch.object(ma, "_post_form", return_value=(True, _token_payload("x" * 3000), "")),
+        patch.object(
+            ma,
+            "fetch_user_info",
+            return_value=(True, {"open_id": "ou_a", "name": "赵江荷"}, ""),
+        ),
+        patch.object(
+            ma, "save_authorization", side_effect=RuntimeError("value too long for varchar(1024)")
+        ),
+    ):
+        status, auth, err = ma.poll_device_authorization(db, "s1", _settings())
+
+    assert status == "error" and auth is None
+    assert "保存失败" in err and "value too long" in err
+    assert db.rollbacks == 1

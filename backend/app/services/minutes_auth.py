@@ -259,17 +259,26 @@ def poll_device_authorization(
     if not open_id:
         return "error", None, "授权用户信息缺少 open_id"
 
-    row = save_authorization(
-        db,
-        open_id=open_id,
-        name=user.get("name") or user.get("en_name") or "",
-        access_token=access_token,
-        refresh_token=refresh_token,
-        scope=str(data.get("scope") or ""),
-        expires_in=int(data.get("expires_in") or 7200),
-        refresh_expires_in=_refresh_expires_seconds(data),
-        authorized_by=session.get("authorized_by") or "",
-    )
+    try:
+        row = save_authorization(
+            db,
+            open_id=open_id,
+            name=user.get("name") or user.get("en_name") or "",
+            access_token=access_token,
+            refresh_token=refresh_token,
+            scope=str(data.get("scope") or ""),
+            expires_in=int(data.get("expires_in") or 7200),
+            refresh_expires_in=_refresh_expires_seconds(data),
+            authorized_by=session.get("authorized_by") or "",
+        )
+    except Exception as exc:  # noqa: BLE001 - 落库失败要回给前端可读原因，不能裸 500
+        db.rollback()
+        logger.exception("保存妙记授权失败 open_id=%s scope_len=%s", open_id, len(str(data.get("scope") or "")))
+        return (
+            "error",
+            None,
+            f"授权已拿到，但保存失败（{exc.__class__.__name__}）：{str(exc)[:200]}",
+        )
     with _DEVICE_LOCK:
         _DEVICE_SESSIONS.pop(session_id, None)
     return "success", serialize_authorization(row), ""

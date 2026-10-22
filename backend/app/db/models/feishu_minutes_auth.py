@@ -38,7 +38,9 @@ class FeishuMinutesAuth(TimestampMixin, Base):
     # user_access_token / refresh_token（明文，供服务端调用飞书；接口层不返回）
     access_token: Mapped[str] = mapped_column(Text, nullable=False, default="")
     refresh_token: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    scope: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
+    # 飞书返回的 scope 串可能很长（设备授权会把应用已开通的权限一并列出，
+    # 含云文档/多维表格等），用 Text 而非定长，避免插入时截断报错
+    scope: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # access_token 过期时间（UTC）；提前 5 分钟视为需要刷新
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
