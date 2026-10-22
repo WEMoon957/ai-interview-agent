@@ -1467,25 +1467,35 @@ def _ai_interview_detail(conn, session_id: str) -> dict | None:
            t.question_type,
            t.is_follow_up,
            t.question_text,
-           t.answer_text,
-           e.scores,
-           e.evidence,
-           e.comment
+           t.answer_text
       FROM interview_turns t
-      LEFT JOIN LATERAL (
-            SELECT scores, evidence, comment
-              FROM answer_evaluations e
-             WHERE e.session_id = t.session_id
-               AND e.question_id = t.question_id
-             ORDER BY e.created_at DESC
-             LIMIT 1
-      ) e ON TRUE
      WHERE t.session_id = %(sid)s::uuid
      ORDER BY t.turn_index
     """
+    eval_sql = """
+    SELECT question_id, scores, evidence, comment
+      FROM answer_evaluations
+     WHERE session_id = %(sid)s::uuid
+     ORDER BY created_at, id
+    """
+    # 对齐口径与后端 services/interview_turns.py::align_evaluations 保持一致：
+    # ① 优先 question_id 相同；② 匹配不到按顺序消费剩余的第一条
+    # （历史回填的轮次 question_id 为空，只能靠顺序；追问会有多条同 question_id 的评分）。
+    remaining = _rows(conn, eval_sql, {"sid": sid})
     turns: list[dict] = []
     for t in _rows(conn, turn_sql, {"sid": sid}):
-        raw_scores = t.get("scores") if isinstance(t.get("scores"), dict) else {}
+        idx = next(
+            (
+                i
+                for i, ev in enumerate(remaining)
+                if (ev.get("question_id") or "") == (t["question_id"] or "")
+            ),
+            None,
+        )
+        if idx is None:
+            idx = 0 if remaining else None
+        ev = remaining.pop(idx) if idx is not None else {}
+        raw_scores = ev.get("scores") if isinstance(ev.get("scores"), dict) else {}
         turns.append(
             {
                 "turn_index": _int(t["turn_index"]),
@@ -1502,8 +1512,8 @@ def _ai_interview_detail(conn, session_id: str) -> dict | None:
                     }
                     for key, value in raw_scores.items()
                 ],
-                "evidence": t.get("evidence") if isinstance(t.get("evidence"), list) else [],
-                "comment": (t.get("comment") or "").strip(),
+                "evidence": ev.get("evidence") if isinstance(ev.get("evidence"), list) else [],
+                "comment": (ev.get("comment") or "").strip(),
             }
         )
 
