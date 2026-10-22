@@ -20,6 +20,19 @@ from app.db.models.summary import RecruitmentSummary
 from app.services import summary as svc
 
 
+@pytest.fixture(autouse=True)
+def _stub_final_pending_notify(monkeypatch):
+    """进入「待终试」会推送老板（真实外呼），单测里一律短路。
+
+    终试推送本身的收件人/卡片行为见 ``test_final_interview_schedule.py``。
+    """
+    monkeypatch.setattr(
+        svc,
+        "notify_final_pending",
+        lambda **_kw: {"status": "skipped", "reason": "单测不推送"},
+    )
+
+
 # ── 测试桩 ───────────────────────────────────────────────────
 class _FakeQuery:
     """极简 query 桩：链式调用返回自身，取数返回预设行。"""
@@ -287,3 +300,78 @@ def test_auto_rebuild_ignores_empty_job_id(monkeypatch):
 
     monkeypatch.setattr(dbsession, "SessionLocal", lambda: pytest.fail("不应建会话"))
     svc.auto_rebuild_summary(None)
+
+
+def test_rebuild_skips_pending_final_when_offline_rejected(monkeypatch):
+    """线下判「不推荐」：流程算走完（is_complete），但不进老板待终试队列。"""
+    job = _job()
+    cid = uuid.uuid4()
+    existing = SimpleNamespace(
+        notified_at=None,
+        job_id=job.id,
+        candidate_id=cid,
+        final_interview_status="none",
+        is_complete=False,
+        detail={},
+    )
+    db = _FakeDB(job=job, existing=existing)
+    monkeypatch.setattr(
+        svc, "build_summary_rows", lambda _db, _jid: [_row(cid, offline_decision="reject")]
+    )
+
+    result = svc.rebuild_job_summary(db, job.id, notify=False)
+
+    assert result["saved"] == 1
+    assert existing.final_interview_status == "none"  # 没进待终试
+    assert existing.detail["offline_decision"] == "reject"
+
+
+def test_rebuild_holds_pending_final_for_get_or_pass(monkeypatch):
+    """hold / pass（或历史空结论）照常进待终试。"""
+    for decision in ("hold", "pass", ""):
+        job = _job()
+        cid = uuid.uuid4()
+        existing = SimpleNamespace(
+            notified_at=None,
+            job_id=job.id,
+            candidate_id=cid,
+            final_interview_status="none",
+            is_complete=False,
+            detail={},
+        )
+        db = _FakeDB(job=job, existing=existing)
+        monkeypatch.setattr(
+            svc,
+            "build_summary_rows",
+            lambda _db, _jid, d=decision: [_row(cid, offline_decision=d)],
+        )
+
+        svc.rebuild_job_summary(db, job.id, notify=False)
+        assert existing.final_interview_status == "pending_final", decision
+
+
+def test_rebuild_revokes_pending_when_later_rejected(monkeypatch):
+    """先入队、后改判不推荐：自动撤回（pending → failed），老板不会再看到。"""
+    job = _job()
+    cid = uuid.uuid4()
+    existing = SimpleNamespace(
+        notified_at=None,
+        job_id=job.id,
+        candidate_id=cid,
+        final_interview_status="pending_final",
+        is_complete=True,
+        detail={},
+        final_interview_note="",
+        final_interview_decided_by="",
+        final_interview_decided_at=None,
+    )
+    db = _FakeDB(job=job, existing=existing)
+    monkeypatch.setattr(
+        svc, "build_summary_rows", lambda _db, _jid: [_row(cid, offline_decision="reject")]
+    )
+
+    svc.rebuild_job_summary(db, job.id, notify=False)
+
+    assert existing.final_interview_status == "failed_final"
+    assert "不推荐" in existing.final_interview_note
+    assert existing.final_interview_decided_by == "system"

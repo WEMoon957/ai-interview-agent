@@ -130,6 +130,10 @@ export const listPendingFinal = (params) =>
 export const decideFinalInterview = (id, data) =>
   request.post(`/admin/recruitment-summaries/${id}/final-decision`, data)
 
+// 老板确认 / 修改终面时间：scheduled_at 为 ISO8601，传 null 清空（改回待约）
+export const scheduleFinalInterview = (id, data) =>
+  request.post(`/admin/recruitment-summaries/${id}/final-schedule`, data)
+
 // 终试面试档案：候选人此前各环节的评分维度 + 优点 / 风险 / 待确认问题
 export const getInterviewBrief = (id) =>
   request.get(`/admin/recruitment-summaries/${id}/brief`)

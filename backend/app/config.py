@@ -170,6 +170,11 @@ class Settings(BaseSettings):
     offer_approver_open_ids: str = ""
     # 店长收件人 open_id（ou_ 开头），多个用英文逗号分隔；候选人接受后同步通知店长
     feishu_store_manager_open_ids: str = ""
+    # 老板收件人 open_id（ou_ 开头），多个用英文逗号分隔。
+    # 候选人进入「待终试」时推送给老板，由老板安排终面时间并拍板。
+    feishu_boss_open_ids: str = ""
+    # 进入「待终试」时是否自动推送老板（独立开关，与 HR 汇总提醒互不影响）
+    feishu_final_pending_notify_enabled: bool = True
     # 候选人确认页展示的 HR 联系电话（候选人放弃线上确认时走线下兜底）
     hr_contact_phone: str = ""
 
@@ -280,6 +285,15 @@ class Settings(BaseSettings):
         return [
             item.strip()
             for item in (self.feishu_store_manager_open_ids or "").split(",")
+            if item.strip()
+        ]
+
+    @property
+    def boss_open_id_list(self) -> list[str]:
+        """老板收件人 open_id 列表（待终试推送、终面安排通知）。"""
+        return [
+            item.strip()
+            for item in (self.feishu_boss_open_ids or "").split(",")
             if item.strip()
         ]
 

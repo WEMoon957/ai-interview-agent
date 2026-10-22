@@ -1,4 +1,4 @@
-"""飞书妙记（Minutes）拉取服务：search 搜索 + 逐字稿导出 + 短码匹配。
+"""飞书妙记（Minutes）拉取服务：search 搜索 + 逐字稿导出 + 姓名匹配（短码兜底）。
 
 设计要点
 --------
@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import re
 import secrets
+import unicodedata
 from datetime import datetime
 from typing import Any
 
@@ -25,33 +26,76 @@ logger = logging.getLogger(__name__)
 
 _FEISHU_API_ROOT = "https://open.feishu.cn"
 
-# 短码：6 位数字（店长填到妙记标题里，后端据此反查）
+# 短码：6 位数字（老流程店长填到妙记标题里，现作为兜底识别）
 _WALK_IN_CODE_RE = re.compile(r"\b(\d{6})\b")
-# 妙记 token：从 URL 末段提取（形如 /minutes/obcnxxx，token 长度 24）
-_MINUTE_TOKEN_RE = re.compile(r"/minutes/([A-Za-z0-9_-]+)")
+# 妙记 token 的三种常见形态（粘贴来源不同，形态不同）：
+#   1) 网页版链接  https://xxx.feishu.cn/minutes/obcnxxxxxxxx
+#   2) 分享链接    https://applink.feishu.cn/client/minutes/open?minuteToken=obcnxxxxxxxx
+#   3) 裸 token    obcnxxxxxxxx（或直接复制的一串 token）
+# 注意：分享链接的路径段是 /minutes/open（动作名，不是 token），故 query 参数必须优先于路径；
+# 路径段则要求足够长度，避免把 open / detail 这类动作名当成 token。
+_MINUTE_QUERY_RE = re.compile(r"minute_?token=([A-Za-z0-9_-]+)", re.IGNORECASE)
+_MINUTE_PATH_RE = re.compile(r"/minutes/((?:obcn[A-Za-z0-9_-]+)|[A-Za-z0-9_-]{20,})")
+_MINUTE_BARE_RE = re.compile(r"\b(obcn[A-Za-z0-9_-]+)\b")
+_MINUTE_RAW_RE = re.compile(r"[A-Za-z0-9_-]{20,64}")
 
 # search 每次最多取 30 条（lark-cli 口径）
 _SEARCH_PAGE_SIZE = 30
 
+# 姓名归一化时剔除的字符：空白与常见中英文分隔符（标题里「王芳-复试」「王 芳」都要能比中）
+_NAME_NOISE_RE = re.compile(r"[\s\-_·・.,，、:：;；|/\\()（）\[\]【】<>《》\"'“”‘’]+")
+# 姓名匹配的最短归一化长度：单字姓名（如「王」）会命中任意标题，一律不自动匹配
+_NAME_MIN_LEN = 2
+
+
+def normalize_name(text: str) -> str:
+    """姓名/标题归一化：全角转半角（NFKC）→ 去空白与分隔符 → 转小写。
+
+    用于标题与候选人姓名的宽松比对，不改变入库数据。
+    """
+    s = unicodedata.normalize("NFKC", text or "")
+    return _NAME_NOISE_RE.sub("", s).lower()
+
+
+def match_candidate_name(title: str, name: str) -> bool:
+    """妙记标题里是否出现候选人姓名（归一化后做子串匹配）。
+
+    姓名归一化后不足 2 个字时返回 False——单字姓名误命中率过高，宁可不匹配，
+    由人工绑定兜底。同名歧义不由本函数负责，调用方须要求「唯一命中」才允许绑定。
+    """
+    name_norm = normalize_name(name)
+    if len(name_norm) < _NAME_MIN_LEN:
+        return False
+    return name_norm in normalize_name(title)
+
 
 def generate_walk_in_code() -> str:
-    """生成 6 位数字短码（店长填到妙记标题里，后端据此匹配）。"""
+    """生成 6 位数字短码（内部唯一编号；老流程里店长填到妙记标题，现仅作兜底）。"""
     return f"{secrets.randbelow(1_000_000):06d}"
 
 
 def extract_walk_in_code(title: str) -> str | None:
-    """从妙记标题中提取 6 位数字短码；没有则返回 None。"""
+    """从妙记标题中提取 6 位数字短码；没有则返回 None（老流程标题兜底识别）。"""
     m = _WALK_IN_CODE_RE.search(title or "")
     return m.group(1) if m else None
 
 
 def extract_minute_token(value: str) -> str | None:
-    """从妙记 URL 或裸 token 中提取 minute_token（用于手动绑定）。"""
+    """从任意形态的妙记链接/分享文本/token 中提取 minute_token。
+
+    依次尝试：分享链接的 ``minuteToken`` 参数 → 网页链接 ``/minutes/<token>`` 路径 →
+    ``obcn`` 裸 token → 纯 token。店长从飞书 App 分享出来的文案常带标题正文，
+    故用 ``search`` 而非全串匹配；query 参数优先于路径，因为分享链接的路径段是
+    ``/minutes/open``（动作名）而不是 token。
+    """
     v = (value or "").strip()
-    m = _MINUTE_TOKEN_RE.search(v)
-    if m:
-        return m.group(1)
-    if re.fullmatch(r"[A-Za-z0-9_-]{20,64}", v):
+    if not v:
+        return None
+    for pattern in (_MINUTE_QUERY_RE, _MINUTE_PATH_RE, _MINUTE_BARE_RE):
+        m = pattern.search(v)
+        if m:
+            return m.group(1)
+    if _MINUTE_RAW_RE.fullmatch(v):
         return v
     return None
 
@@ -114,7 +158,7 @@ def search_minutes(
 
     Args:
         access_token: 该妙记所有者的 user_access_token；为空则用应用身份（只能搜到公开妙记）。
-        query: 关键词（建议传 6 位短码）。飞书搜索无全量列表接口，空 query 枚举不可靠。
+        query: 搜索关键词（传候选人姓名）。飞书搜索无全量列表接口，空 query 枚举不可靠。
     """
     settings = settings or get_settings()
     items: list[dict] = []

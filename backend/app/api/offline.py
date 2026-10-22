@@ -43,7 +43,7 @@ from app.db.models.admin_user import ADMIN_ROLE, HR_ROLE, STORE_MANAGER_ROLE
 from app.exceptions import BizError
 from app.services.audio_storage import audio_abs_path, delete_audio
 from app.services.feishu_minutes import extract_minute_token, generate_walk_in_code
-from app.services.minutes_poller import transcribe_and_score
+from app.services.minutes_poller import transcribe_and_score_detailed
 from app.services.summary import auto_rebuild_summary
 
 logger = logging.getLogger(__name__)
@@ -211,8 +211,9 @@ async def create_walk_in_interview(
     - 姓名 / 手机号 / 来源渠道 **必填**；
     - 同「姓名 + 手机号」的候选人已存在时**复用**，不重复建人；
     - 同一候选人在同一岗位已有面试记录时返回 409，避免重复提交；
-    - 录音**不落服务器/本地**：开启妙记开关时生成短码，店长在飞书妙记录音并把标题填成短码，
-      后端轮询自动拉取逐字稿生成 AI 参考分。
+    - 录音**不落服务器/本地**：开启妙记开关时置 pending，店长在飞书妙记录音并把**标题
+      写成候选人姓名**，后端轮询按姓名匹配、自动拉取逐字稿生成 AI 参考分；标题写错或
+      漏写时，可用「绑定妙记」粘贴链接补救（两种方式都不需要短码）。
     """
     jid = _parse_uuid(job_id, "job_id")
     job = db.get(JobPosting, jid)
@@ -265,7 +266,8 @@ async def create_walk_in_interview(
             http_status=409,
         )
 
-    # 妙记录音节点：开关开启时生成短码，店长把妙记标题填成它，后端轮询据此关联
+    # 妙记录音节点：开关开启时置 pending，后端轮询按候选人姓名匹配妙记标题。
+    # 短码仍生成，但只作内部唯一编号与老流程兜底，不再要求店长写进标题。
     settings = get_settings()
     walk_in_code = None
     interviewer_open_id = settings.feishu_minutes_default_owner_open_id or None
@@ -415,9 +417,15 @@ def score_offline_interview(
 
 @router.post("/offline-interviews/{offline_id}/bind-minutes")
 def bind_minutes(offline_id: str, payload: MinutesBind, db: Session = Depends(get_db)):
-    """手动绑定飞书妙记（录音节点降级通道）：店长粘贴妙记链接/token，立即拉逐字稿并评分。
+    """手动绑定飞书妙记（录音节点降级通道）：粘贴妙记链接，立即拉逐字稿并评分。
 
-    正常路径由后台轮询自动匹配，本接口用于：轮询未命中时手动补救、或 failed 记录重试。
+    链接形态不限：网页版 ``/minutes/<token>``、App 分享的 ``?minuteToken=`` 链接、
+    裸 token、以及带标题正文的整段分享文案都能识别（见 ``extract_minute_token``）。
+    **不依赖妙记标题**，因此标题写什么都不影响转写——这是标题写错/漏写时的兜底。
+
+    正常路径由后台轮询按候选人姓名自动匹配，本接口用于：轮询未命中时手动补救、
+    或 failed 记录重试。转写能否成功取决于权限：私有妙记需要归属人已授权，
+    否则降级 bot 只能读已公开妙记。
     """
     oid = _parse_uuid(offline_id, "offline_id")
     row = db.get(OfflineInterview, oid)
@@ -433,13 +441,14 @@ def bind_minutes(offline_id: str, payload: MinutesBind, db: Session = Depends(ge
     row.transcript_status = "matched"
     db.commit()
 
-    transcribed = transcribe_and_score(db, row)
+    transcribed, err = transcribe_and_score_detailed(db, row)
     db.refresh(row)
     return ok(
         {
             "record": _offline_out(row),
             "transcript_text": row.transcript_text or "",
             "transcribed": transcribed,
+            "error": "" if transcribed else err,
         }
     )
 
@@ -479,13 +488,14 @@ def transcribe_offline(offline_id: str, db: Session = Depends(get_db)):
     if not row.minutes_token:
         raise BizError(409, "尚未绑定妙记，请先绑定妙记链接", http_status=409)
 
-    transcribed = transcribe_and_score(db, row)
+    transcribed, err = transcribe_and_score_detailed(db, row)
     db.refresh(row)
     return ok(
         {
             "record": _offline_out(row),
             "transcript_text": row.transcript_text or "",
             "transcribed": transcribed,
+            "error": "" if transcribed else err,
         }
     )
 

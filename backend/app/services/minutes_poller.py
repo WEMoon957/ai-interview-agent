@@ -1,8 +1,9 @@
-"""飞书妙记轮询任务：定时搜索店长妙记 → 短码匹配 → 拉逐字稿 → 整场评分。
+"""飞书妙记轮询任务：定时搜索店长妙记 → 姓名匹配（短码兜底）→ 拉逐字稿 → 整场评分。
 
 由 ``main.py`` lifespan 启动 asyncio 后台任务（``FEISHU_MINUTES_ENABLED`` 开关）。
 设计要点：
 - **幂等**：以 ``walk_in_code`` / ``minutes_token`` + ``transcript_status`` 状态机保证重复轮询无副作用；
+- **防串场**：姓名命中多条妙记时**不自动绑定**（保持 pending，转人工），漏抓可发现、错绑发现不了；
 - **隔离**：任何一步失败只记日志 + 置 ``failed``，绝不抛出、不影响主流程；
 - **降级**：LLM 评分失败只跳过 AI 参考分，不影响逐字稿落库。
 """
@@ -15,7 +16,12 @@ from datetime import datetime, timedelta, timezone
 from app.config import Settings, get_settings
 from app.db.models import InterviewTemplate, OfflineInterview
 from app.db.session import SessionLocal
-from app.services.feishu_minutes import extract_walk_in_code, get_transcript, search_minutes
+from app.services.feishu_minutes import (
+    extract_walk_in_code,
+    get_transcript,
+    match_candidate_name,
+    search_minutes,
+)
 from app.services.minutes_auth import get_valid_user_token, list_authorizations
 from app.services.qa_extraction import extract_interview_qa
 from app.services.summary import auto_rebuild_summary
@@ -26,6 +32,11 @@ logger = logging.getLogger(__name__)
 # 转写阶段需要处理的状态
 _MATCHABLE_STATUS = ("pending", "failed")
 _TRANSCRIBE_STATUS = ("matched", "failed")
+# 约面日前后各覆盖几天，避免只在「最近 N 天」窗口内找不到面试当天的录音
+_SCHEDULED_PAD_DAYS = 2
+# 飞书 search 单次查询的时间跨度上限（天）
+_MAX_SEARCH_SPAN_DAYS = 30
+
 
 
 def _resolve_rubric(db, row: OfflineInterview) -> list:
@@ -55,6 +66,49 @@ def _bind_minutes(db, row: OfflineInterview, item: dict) -> bool:
     row.transcript_status = "matched"
     db.commit()
     return True
+
+
+def _candidate_name(row: OfflineInterview) -> str:
+    """记录关联的候选人姓名（妙记标题的匹配依据）。"""
+    candidate = getattr(row, "candidate", None)
+    return ((getattr(candidate, "name", "") or "") if candidate else "").strip()
+
+
+def _search_window(
+    row: OfflineInterview, now: datetime, settings: Settings
+) -> tuple[datetime, datetime]:
+    """妙记搜索时间窗：至少覆盖最近 N 天，并额外覆盖约面日前后各 2 天。
+
+    姓名匹配比短码模糊，窗口越窄越安全；但不能只取约面日——记录改期或补录时
+    录音可能落在别处，故与「最近 N 天」取并集。
+    """
+    days = max(1, int(settings.feishu_minutes_search_window_days))
+    start = now - timedelta(days=days)
+    end = now
+    scheduled = getattr(row, "scheduled_at", None)
+    if scheduled is not None:
+        if scheduled.tzinfo is None:
+            scheduled = scheduled.replace(tzinfo=timezone.utc)
+        start = min(start, scheduled - timedelta(days=_SCHEDULED_PAD_DAYS))
+        end = max(end, scheduled + timedelta(days=_SCHEDULED_PAD_DAYS))
+    # 飞书 search 单次时间跨度上限 1 个月，超了接口直接报错；宁可缩短窗口也不要整轮失败
+    if end - start > timedelta(days=_MAX_SEARCH_SPAN_DAYS):
+        start = end - timedelta(days=_MAX_SEARCH_SPAN_DAYS)
+    return start, end
+
+
+def _pick_by_name(items: list[dict], name: str) -> list[dict]:
+    """标题含该候选人姓名的妙记（可能多条 → 调用方须按歧义处理）。"""
+    if not name:
+        return []
+    return [it for it in items if match_candidate_name(it.get("title") or "", name)]
+
+
+def _pick_by_code(items: list[dict], code: str | None) -> list[dict]:
+    """标题含该 6 位短码的妙记（老流程标题的兜底识别）。"""
+    if not code:
+        return []
+    return [it for it in items if extract_walk_in_code(it.get("title") or "") == code]
 
 
 def _owner_open_id(row: OfflineInterview, settings: Settings) -> str:
@@ -97,6 +151,17 @@ def transcribe_and_score(
     （只能读已公开妙记）。评分与问答抽取各自独立降级，任一失败都不影响逐字稿落库。
     供轮询任务与手动触发接口复用（公开）。
     """
+    ok, _ = transcribe_and_score_detailed(db, row, settings)
+    return ok
+
+
+def transcribe_and_score_detailed(
+    db, row: OfflineInterview, settings: Settings | None = None
+) -> tuple[bool, str]:
+    """``transcribe_and_score`` 的带原因版本：返回 (是否成功, 失败原因)。
+
+    失败原因直接透给手动绑定接口，避免店长只看到「转写失败」却不知道是权限问题。
+    """
     settings = settings or get_settings()
     owner_id, user_token = _resolve_owner_token(db, row, settings)
 
@@ -113,7 +178,7 @@ def transcribe_and_score(
             "yes" if user_token else "no",
             err,
         )
-        return False
+        return False, err
 
     now = datetime.now(timezone.utc)
     row.transcript_text = text
@@ -155,21 +220,20 @@ def transcribe_and_score(
     except Exception:  # noqa: BLE001 - 抽取失败不影响转写与评分
         logger.exception("面试问答抽取异常 minute=%s", row.minutes_token)
         db.rollback()
-    return True
+    return True, ""
 
 
 def poll_minutes_once(settings: Settings | None = None) -> dict:
     """执行一轮轮询，返回统计 dict（供日志/观测）。"""
     settings = settings or get_settings()
-    stats = {"matched": 0, "transcribed": 0, "errors": 0}
+    stats = {"matched": 0, "transcribed": 0, "errors": 0, "ambiguous": 0}
 
     db = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
-        start = now - timedelta(days=max(1, int(settings.feishu_minutes_search_window_days)))
 
-        # 1) 匹配阶段：pending / failed(无 token) 的记录，按 6 位短码精确搜索。
-        #    飞书搜索是关键词搜索、没有全量列表接口，故用 query=<短码> 而不是空 query 遍历。
+        # 1) 匹配阶段：pending / failed(无 token) 的记录，按候选人姓名搜索妙记标题。
+        #    飞书搜索是关键词搜索、没有全量列表接口，故必须带 query（姓名）而不是空 query 遍历。
         #    归属人若有个人授权，用其 user token（可搜私有妙记），否则降级 bot（只能搜公开）。
         pending = (
             db.query(OfflineInterview)
@@ -184,28 +248,71 @@ def poll_minutes_once(settings: Settings | None = None) -> dict:
             owner_id, user_token = _resolve_owner_token(db, row, settings)
             if not owner_id:
                 continue
+
+            name = _candidate_name(row)
+            query = name or row.walk_in_code or ""
+            if not query:
+                continue
+
+            start, end = _search_window(row, now, settings)
             ok, items, err = search_minutes(
                 owner_id,
                 start,
-                now,
+                end,
                 settings=settings,
                 access_token=user_token,
-                query=row.walk_in_code or "",
+                query=query,
             )
             if not ok:
                 stats["errors"] += 1
-                logger.warning("妙记搜索失败 owner=%s err=%s", owner_id, err)
+                logger.warning("妙记搜索失败 owner=%s query=%s err=%s", owner_id, query, err)
                 continue
-            for item in items:
-                if extract_walk_in_code(item.get("title") or "") != row.walk_in_code:
-                    continue
-                if _bind_minutes(db, row, item):
-                    stats["matched"] += 1
-                # 记录真实 owner：后续转写要用「妙记所有者本人」的 token 才能读私有妙记
-                if not row.interviewer_open_id and item.get("owner_id"):
-                    row.interviewer_open_id = item["owner_id"]
-                    db.commit()
-                break
+
+            hit: dict | None = None
+            how = ""
+            hits = _pick_by_name(items, name)
+            if len(hits) == 1:
+                hit, how = hits[0], "name"
+            elif len(hits) > 1:
+                # 同名歧义：宁可漏抓也不能把 A 的录音绑到 B 的档案上（错绑是静默的）
+                stats["ambiguous"] += 1
+                logger.warning(
+                    "姓名命中多条妙记，跳过自动绑定 offline=%s name=%s titles=%s",
+                    getattr(row, "id", "-"),
+                    name,
+                    [it.get("title") for it in hits],
+                )
+
+            # 姓名未唯一命中时，用短码再搜一次兜底：老流程「标题写短码」的记录仍能认出来
+            if hit is None and row.walk_in_code:
+                ok_code, items_code, _ = search_minutes(
+                    owner_id,
+                    start,
+                    end,
+                    settings=settings,
+                    access_token=user_token,
+                    query=row.walk_in_code,
+                )
+                if ok_code:
+                    by_code = _pick_by_code(items_code, row.walk_in_code)
+                    if len(by_code) == 1:
+                        hit, how = by_code[0], "code"
+
+            if hit is None:
+                continue
+
+            if _bind_minutes(db, row, hit):
+                stats["matched"] += 1
+                logger.info(
+                    "妙记匹配成功 offline=%s how=%s title=%s",
+                    getattr(row, "id", "-"),
+                    how,
+                    hit.get("title"),
+                )
+            # 记录真实 owner：后续转写要用「妙记所有者本人」的 token 才能读私有妙记
+            if not row.interviewer_open_id and hit.get("owner_id"):
+                row.interviewer_open_id = hit["owner_id"]
+                db.commit()
 
         # 2) 转写 + 评分阶段：matched / failed(有 token) 的记录
         to_transcribe = (

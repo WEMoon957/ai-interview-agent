@@ -377,7 +377,7 @@
         </el-form-item>
         <el-form-item label="录音方式">
           <div class="tip">
-            录音保存在飞书：建档后系统会给出一个短码，店长在飞书妙记录音时把标题填成这个短码，系统会自动识别并生成参考分。
+            录音保存在飞书：店长在飞书妙记录音时，把<b>标题写成候选人姓名</b>即可，系统会自动匹配并生成参考分。标题写错或漏写也没关系——在面试记录里点「粘贴录音链接」，贴入妙记链接同样能转写。
           </div>
         </el-form-item>
       </el-form>
@@ -397,7 +397,7 @@
         :closable="false"
         show-icon
         style="margin-bottom: 14px"
-        title="店长在飞书录完音后，把录音链接粘贴到这里，系统会自动转成文字并生成 AI 参考分。"
+        title="粘什么链接都行：网页版妙记链接、飞书 App 分享出来的链接、带标题的整段分享文案，或直接复制的妙记编号，都能转成文字并生成 AI 参考分。与妙记标题无关。"
       />
       <el-form label-width="90px">
         <el-form-item label="候选人">
@@ -406,7 +406,9 @@
         <el-form-item label="录音链接" required>
           <el-input
             v-model="bindForm.minutesUrl"
-            placeholder="粘贴妙记链接，如 https://xxx.feishu.cn/minutes/obcnxxx"
+            type="textarea"
+            :rows="3"
+            placeholder="粘贴妙记链接即可，如 https://xxx.feishu.cn/minutes/obcnxxx（App 分享的链接或整段分享文案也行）"
           />
         </el-form-item>
       </el-form>
@@ -565,6 +567,14 @@ async function load() {
 
 // ── 到店直招 ────────────────────────────────────────
 
+/** 弹窗用 HTML 渲染，候选人姓名是用户输入，插入前必须转义 */
+function escapeHtml(value) {
+  return String(value ?? '').replace(
+    /[&<>"']/g,
+    (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]
+  )
+}
+
 function openWalkIn() {
   walkInForm.value = {
     jobId: jobId.value || '',
@@ -602,15 +612,10 @@ async function submitWalkIn(thenScore) {
     walkInVisible.value = false
     ElMessage.success('到店直招已建档')
     await load()
-    const code = res.record?.walk_in_code
-    if (code) {
-      try {
-        await navigator.clipboard.writeText(code)
-      } catch {
-        /* 剪贴板不可用时忽略 */
-      }
+    const name = res.record?.candidate_name
+    if (name) {
       ElMessageBox.alert(
-        `录音短码：<b>${code}</b>（已复制到剪贴板）<br><br>请让店长打开飞书妙记开始录音，并把妙记<b>标题填成这个短码</b>；录完后系统会自动拉取逐字稿并生成 AI 参考分。`,
+        `请让店长打开飞书妙记开始录音，并把妙记<b>标题写成候选人姓名「${escapeHtml(name)}」</b>；录完后系统会自动匹配、拉取逐字稿并生成 AI 参考分。<br><br>标题写错或漏写也不用重录——在面试记录里点「粘贴录音链接」，贴入妙记链接同样能转写。`,
         '飞书妙记录音',
         { confirmButtonText: '知道了', type: 'info', dangerouslyUseHTMLString: true, showClose: false }
       )
@@ -795,7 +800,9 @@ async function submitBind() {
     } else if (res.transcribed) {
       ElMessage.success('转写完成（AI 评分暂不可用）')
     } else {
-      ElMessage.warning('已绑定，但拉取逐字稿失败，可稍后重试')
+      ElMessage.warning(
+        res.error ? `已绑定，但拉取逐字稿失败：${res.error}` : '已绑定，但拉取逐字稿失败，可稍后重试'
+      )
     }
     await load()
   } finally {
@@ -803,7 +810,7 @@ async function submitBind() {
   }
 }
 
-/** 在打分弹窗内一键采纳 AI 参考分（回填表单，店长确认后提交） */
+/** 在打分弹窗内一键采纳 AI 参考分（回填表单，HR 确认结论后提交） */
 function fillAiScore() {
   const t = scoreTarget.value
   if (t?.ai_score == null) return

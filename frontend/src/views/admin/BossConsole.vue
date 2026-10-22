@@ -2,7 +2,7 @@
   <div>
     <el-alert type="info" :closable="false" show-icon class="guide">
       <template #title>
-        <b>老板操作台</b>：只做最后两件事 —— 给走完复试的候选人拍板<b>终试</b>，以及审批 HR 提交的<b>录用 Offer</b>。
+        <b>老板操作台</b>：给走完复试的候选人<b>确认终面时间</b>、面试后拍板<b>终试</b>，以及审批 HR 提交的<b>录用 Offer</b>。
         拍板前先看<b>面试档案</b>：此前各环节的评分维度、优点、风险、待确认问题都在里面。
       </template>
     </el-alert>
@@ -63,8 +63,19 @@
             <b>{{ score(row.final_score) }}</b>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="终面时间" width="155">
           <template #default="{ row }">
+            <span v-if="row.final_interview_scheduled_at">
+              {{ formatWhen(row.final_interview_scheduled_at) }}
+            </span>
+            <el-tag v-else type="warning" size="small" effect="plain">待安排</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="300" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" @click="openSchedule(row)">
+              {{ row.final_interview_scheduled_at ? '改期' : '安排终面' }}
+            </el-button>
             <el-button type="success" size="small" @click="openFinal(row, 'pass')">通过终试</el-button>
             <el-button type="danger" size="small" @click="openFinal(row, 'fail')">不通过</el-button>
           </template>
@@ -112,6 +123,38 @@
     <!-- 录用审批弹窗（复用后台审批弹窗：同意 / 驳回）-->
     <OfferApproveDialog v-model="showApprove" :offer="currentOffer" @done="loadPendingOffers" />
 
+    <!-- 确认终面时间弹窗：老板看到待终试后先约时间，面完再拍板 -->
+    <el-dialog v-model="showSchedule" title="确认终面时间" width="460px" :close-on-click-modal="false">
+      <el-form label-width="90px">
+        <el-form-item label="候选人">
+          <span>{{ scheduleTarget?.candidate_name }}（{{ scheduleTarget?.job_title }}）</span>
+        </el-form-item>
+        <el-form-item label="终面时间" required>
+          <el-date-picker
+            v-model="scheduleAt"
+            type="datetime"
+            placeholder="选择日期与时间"
+            format="YYYY-MM-DD HH:mm"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input
+            v-model="scheduleNote"
+            maxlength="100"
+            show-word-limit
+            placeholder="选填，如地点 / 线上会议"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showSchedule = false">取消</el-button>
+        <el-button type="primary" :loading="scheduleActing" @click="submitSchedule">
+          确认时间
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 终试决策弹窗 -->
     <el-dialog
       v-model="showFinal"
@@ -123,6 +166,12 @@
         <el-descriptions-item label="候选人">{{ currentFinal.candidate_name }}</el-descriptions-item>
         <el-descriptions-item label="岗位">{{ currentFinal.job_title }}</el-descriptions-item>
         <el-descriptions-item label="终分">{{ score(currentFinal.final_score) }}</el-descriptions-item>
+        <el-descriptions-item label="终面时间">
+          <span v-if="currentFinal.final_interview_scheduled_at">
+            {{ formatWhen(currentFinal.final_interview_scheduled_at) }}
+          </span>
+          <el-tag v-else type="warning" size="small" effect="plain">待安排</el-tag>
+        </el-descriptions-item>
       </el-descriptions>
 
       <!-- 拍板前速览：优点 / 风险 / 终试追问（勾选表示已当面确认） -->
@@ -383,6 +432,7 @@ import { ElMessage } from 'element-plus'
 import {
   listPendingFinal,
   decideFinalInterview,
+  scheduleFinalInterview,
   listOffers,
   getOfferStats,
   getInterviewBrief,
@@ -406,6 +456,13 @@ const finalActing = ref(false)
 const finalBrief = ref(null)
 const finalAsked = ref([])
 
+// 终面时间确认（老板约时间 / 改期）
+const showSchedule = ref(false)
+const scheduleTarget = ref(null)
+const scheduleAt = ref(null)
+const scheduleNote = ref('')
+const scheduleActing = ref(false)
+
 const showBrief = ref(false)
 const brief = ref(null)
 const briefRow = ref(null)
@@ -413,6 +470,15 @@ const loadingBrief = ref(false)
 
 function score(v) {
   return v == null ? '-' : v
+}
+
+/** ISO 时间串 → 本地「YYYY-MM-DD HH:mm」，无效值原样返回 */
+function formatWhen(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return String(iso)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 function scoreClass(s) {
@@ -527,6 +593,39 @@ function decideFromBrief(decision) {
   if (!row) return
   showBrief.value = false
   openFinal(row, decision)
+}
+
+// ── 终面时间确认 ────────────────────────────────────────────
+function openSchedule(row) {
+  scheduleTarget.value = row
+  scheduleAt.value = row.final_interview_scheduled_at
+    ? new Date(row.final_interview_scheduled_at)
+    : null
+  scheduleNote.value = ''
+  showSchedule.value = true
+}
+
+async function submitSchedule() {
+  if (!scheduleTarget.value) return
+  if (!scheduleAt.value) {
+    ElMessage.warning('请选择终面时间')
+    return
+  }
+  scheduleActing.value = true
+  try {
+    // 用户选的是本地时间，转成 UTC ISO 再发；后端按带时区解析
+    await scheduleFinalInterview(scheduleTarget.value.id, {
+      scheduled_at: new Date(scheduleAt.value).toISOString(),
+      note: scheduleNote.value,
+    })
+    ElMessage.success('终面时间已确认')
+    showSchedule.value = false
+    await loadPendingFinal()
+  } catch (e) {
+    /* 拦截器已提示 */
+  } finally {
+    scheduleActing.value = false
+  }
 }
 
 // ── 终试决策 ────────────────────────────────────────────────

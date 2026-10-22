@@ -987,20 +987,31 @@ def send_card(
     *,
     settings: Settings | None = None,
     sender: CardSender | None = None,
+    recipients: list[str] | None = None,
 ) -> tuple[bool, list[str], str]:
-    """向所有配置的 HR 收件人发送卡片；任一人成功即视为成功。"""
+    """发送卡片；默认发给所有配置的 HR 收件人，``recipients`` 非空时只发给指定的人。
+
+    指定收件人用于「老板通知」这类不该抄送 HR 的卡片（终试推送、终面安排）。
+    任一人成功即视为成功。
+    """
     settings = settings or get_settings()
-    recipients, resolve_err = resolve_recipients(settings)
-    recipients = merge_observers(recipients, settings)
-    if not recipients:
-        return False, [], resolve_err or (
-            "未解析到任何 HR 收件人（请检查 FEISHU_HR_OPEN_IDS / FEISHU_HR_DEPARTMENT_IDS / FEISHU_OBSERVER_OPEN_IDS）"
-        )
+    if recipients is not None:
+        targets = [r for r in recipients if r]
+        if not targets:
+            return False, [], "未指定收件人（请检查 FEISHU_BOSS_OPEN_IDS）"
+        resolve_err = ""
+    else:
+        targets, resolve_err = resolve_recipients(settings)
+        targets = merge_observers(targets, settings)
+        if not targets:
+            return False, [], resolve_err or (
+                "未解析到任何 HR 收件人（请检查 FEISHU_HR_OPEN_IDS / FEISHU_HR_DEPARTMENT_IDS / FEISHU_OBSERVER_OPEN_IDS）"
+            )
 
     send = sender or default_card_sender
     ok_any = False
     errors: list[str] = []
-    for open_id in recipients:
+    for open_id in targets:
         try:
             ok, err = send(open_id, card, settings)
         except Exception as exc:  # noqa: BLE001 - 单个收件人失败不拖垮整体
@@ -1011,7 +1022,7 @@ def send_card(
             errors.append(f"{open_id}: {err}")
     if resolve_err:
         errors.insert(0, resolve_err)
-    return ok_any, recipients, "; ".join(errors)
+    return ok_any, targets, "; ".join(errors)
 
 
 # ══════════════════════════ 飞书待办（任务） ══════════════════════════
@@ -1439,6 +1450,145 @@ def notify_summary_review(
         try:
             task_ok, assignees, task_err = create_tasks(
                 title, desc, settings=settings, creator=creator
+            )
+        except Exception as exc:  # noqa: BLE001 - 待办失败不影响卡片已送达的事实
+            task_ok, assignees, task_err = False, [], repr(exc)
+        result["task"] = {
+            "status": "created" if task_ok else "failed",
+            "assignees": assignees,
+            "reason": task_err,
+        }
+    else:
+        result["task"] = {"status": "skipped", "reason": "待办创建未启用"}
+
+    return result
+
+
+# ══════════════════════════ 终试推送（发给老板）══════════════════════════
+#
+# 第五类推送：候选人线下复试完成、汇总自动进入「待终试」时，推给**老板**而不是 HR。
+# 老板要在这条消息里知道「谁、什么岗位、各段多少分、终面时间约了没」，
+# 然后打开操作台确认终面时间。收件人独立配置（FEISHU_BOSS_OPEN_IDS），
+# 不抄送 HR —— 终试是老板关卡，给 HR 刷同样的消息只会造成噪音。
+
+
+def build_final_pending_card(
+    *,
+    items: list[dict],
+    base_url: str = "",
+    max_items: int = 20,
+) -> dict:
+    """构造「待终试 · 请确认终面时间」卡片（发给老板）。
+
+    Args:
+        items: 待终试候选人，含 candidate_name / job_title / final_score /
+            screening_score / ai_interview_score / offline_score /
+            final_interview_scheduled_at（已安排时间，空串表示待约）。
+    """
+
+    def _render(rows: list[dict]) -> str:
+        lines = []
+        for idx, item in enumerate(_cap(rows, max_items), start=1):
+            scheduled = (item.get("final_interview_scheduled_at") or "").strip()
+            lines.append(
+                f"{idx}. **{item.get('candidate_name') or '（未填写姓名）'}**"
+                f"（{item.get('job_title') or '—'}）\n"
+                f"   最终 {_fmt_score(item.get('final_score'))} 分 ／ "
+                f"初筛 {_fmt_score(item.get('screening_score'))} ／ "
+                f"AI {_fmt_score(item.get('ai_interview_score'))} ／ "
+                f"复试 {_fmt_score(item.get('offline_score'))}\n"
+                f"   终面时间：{scheduled or '**待安排**'}"
+            )
+        if len(rows) > max_items:
+            lines.append(f"… 另有 {len(rows) - max_items} 人未列出")
+        return "\n".join(lines) if lines else "无"
+
+    blocks = [
+        f"**待终试**：{len(items)} 位候选人已完成线下复试，等您确认终面时间。",
+        _render(items),
+        "> 请打开「老板操作台」确认终面时间；面试结束后在同一页面点「通过 / 不通过」。",
+    ]
+    actions = []
+    if base_url:
+        actions.append(
+            {
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "打开老板操作台"},
+                "type": "primary",
+                "url": f"{base_url.rstrip('/')}/console/boss",
+            }
+        )
+    return build_card(
+        "待终试 · 请确认终面时间", "blue", blocks, actions=actions or None
+    )
+
+
+def notify_final_pending(
+    *,
+    items: list[dict],
+    settings: Settings | None = None,
+    sender: CardSender | None = None,
+    creator: TaskCreator | None = None,
+) -> dict:
+    """候选人进入「待终试」时推送老板（卡片 + 待办）。绝不抛异常。
+
+    Returns:
+        ``{"status": "sent"|"skipped"|"failed", "recipients": [...], ...}``；
+        ``task`` 字段为待办创建结果。
+    """
+    settings = settings or get_settings()
+
+    if not settings.feishu_final_pending_notify_enabled:
+        return {"status": "skipped", "reason": "终试推送未启用"}
+    if not settings.feishu_notify_ready:
+        return {"status": "skipped", "reason": "飞书通知未就绪（开关/收件人/传输凭据）"}
+
+    rows = list(items or [])
+    if not rows:
+        return {"status": "skipped", "reason": "无待终试候选人"}
+
+    boss_ids = settings.boss_open_id_list
+    if not boss_ids:
+        return {"status": "skipped", "reason": "未配置老板收件人（FEISHU_BOSS_OPEN_IDS）"}
+
+    card = build_final_pending_card(
+        items=rows,
+        base_url=settings.public_base_url_normalized,
+        max_items=settings.feishu_notify_max_items,
+    )
+    sent, targets, err = send_card(
+        card, settings=settings, sender=sender, recipients=boss_ids
+    )
+    if not sent:
+        return {
+            "status": "failed",
+            "reason": err or "未知错误",
+            "recipients": targets,
+            "pending": len(rows),
+        }
+
+    result: dict = {
+        "status": "sent",
+        "recipients": targets,
+        "pending": len(rows),
+    }
+
+    # 待办同样发给老板：卡片会被刷过去，待办会留在列表里
+    if settings.feishu_task_enabled:
+        names = "、".join(
+            (r.get("candidate_name") or "候选人") for r in rows[:5]
+        )
+        if len(rows) > 5:
+            names += f" 等 {len(rows)} 人"
+        title = f"【终面待确认】{len(rows)} 位候选人待定终面时间"
+        desc = (
+            f"候选人：{names}\n"
+            "线下复试已完成，请打开「老板操作台」确认终面时间；"
+            "面试结束后在同一页面点「通过 / 不通过」。"
+        )
+        try:
+            task_ok, assignees, task_err = create_tasks(
+                title, desc, settings=settings, creator=creator, assignees=boss_ids
             )
         except Exception as exc:  # noqa: BLE001 - 待办失败不影响卡片已送达的事实
             task_ok, assignees, task_err = False, [], repr(exc)

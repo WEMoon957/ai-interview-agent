@@ -29,8 +29,11 @@ from app.db.models import (
     ResumeScreening,
     SessionReport,
 )
-from app.services.feishu_notify import notify_summary_review
-from app.services.final_interview import mark_pending_final_if_complete
+from app.services.feishu_notify import notify_final_pending, notify_summary_review
+from app.services.final_interview import (
+    mark_pending_final_if_complete,
+    revoke_pending_final_if_rejected,
+)
 from app.services.resume_screening import recommendation_from_score
 
 logger = logging.getLogger(__name__)
@@ -176,6 +179,7 @@ def build_summary_rows(db: Session, job_id: uuid.UUID) -> list[dict[str, Any]]:
                 "session_token": None,
                 "session_status": None,
                 "offline_score": None,
+                "offline_decision": "",
                 "offline_id": None,
                 "offline_status": None,
                 "offline_scheduled_at": None,
@@ -237,6 +241,8 @@ def build_summary_rows(db: Session, job_id: uuid.UUID) -> list[dict[str, Any]]:
         row["offline_scheduled_at"] = o.scheduled_at.isoformat() if o.scheduled_at else None
         row["offline_source"] = o.source or "online"
         row["interviewer"] = o.interviewer or ""
+        # 店长的录用结论（pass / hold / reject）：reject 直接跳过终试，不进老板队列
+        row["offline_decision"] = o.decision or ""
         if o.score is not None:
             row["offline_score"] = _round(o.score)
 
@@ -286,6 +292,7 @@ def build_summary_rows(db: Session, job_id: uuid.UUID) -> list[dict[str, Any]]:
                 "stage_label": STAGE_LABELS.get(stage, stage),
                 "is_complete": is_complete,
                 "final_verdict": verdict,
+                "offline_decision": row["offline_decision"],
                 "summary": _build_summary_text(row, final_score, stage),
                 "job_title": job.title if job is not None else "",
                 "offline_source": row["offline_source"],
@@ -351,6 +358,7 @@ def rebuild_job_summary(
     stamp = now or datetime.now(timezone.utc)
     saved = 0
     pending_notify: list[RecruitmentSummary] = []
+    newly_pending_final: list[RecruitmentSummary] = []
 
     for r in build_summary_rows(db, job.id):
         existing = (
@@ -367,6 +375,7 @@ def rebuild_job_summary(
             "ai_interview_verdict": r.get("ai_interview_verdict", ""),
             "ai_interview_summary": r.get("ai_interview_summary", ""),
             "offline_score": r["offline_score"],
+            "offline_decision": r.get("offline_decision", ""),
             "screening_id": r["screening_id"],
             "session_id": r["session_id"],
             "session_token": r["session_token"],
@@ -391,10 +400,19 @@ def rebuild_job_summary(
         existing.stage = r["stage"]
         existing.final_verdict = r["final_verdict"]
         existing.is_complete = r["is_complete"]
-        # 候选人才刚走完全链路（此前未进入终试流程）→ 自动进入「待终试」，等老板拍板
-        mark_pending_final_if_complete(existing)
         existing.summary = r["summary"]
+        # detail 必须先落库再走终试闸门：闸门要读里面的线下结论（offline_decision）
         existing.detail = detail
+        # 刚走完全链路、且店长没标「不推荐」→ 自动进入「待终试」，等老板确认终面时间
+        if mark_pending_final_if_complete(existing):
+            newly_pending_final.append(existing)
+        # 已在队列、之后被店长改判「不推荐」→ 自动撤回，避免老板对着不合适的人排终面
+        if revoke_pending_final_if_rejected(existing):
+            logger.info(
+                "线下复试改判不推荐，已撤回待终试 candidate=%s job=%s",
+                existing.candidate_name,
+                job.title,
+            )
         existing.snapshot_at = stamp
         saved += 1
 
@@ -403,15 +421,21 @@ def rebuild_job_summary(
 
     db.commit()
 
+    # 终试推送：独立于 HR 汇总提醒，不随 notify 开关关闭——状态只会从 none 变一次，
+    # 天然幂等；老板收不到通知，整条「等老板确认终面」的链路就断了。
+    final_pending_res = _notify_boss_new_pending(job, newly_pending_final)
+
     if not notify:
         return {
             "saved": saved,
             "notify": {"job_title": job.title, "status": "skipped", "reason": "调用方指定不推送（notify=false）"},
+            "final_pending": final_pending_res,
         }
     if not pending_notify:
         return {
             "saved": saved,
             "notify": {"job_title": job.title, "status": "skipped", "reason": "无新完成待提醒的候选人"},
+            "final_pending": final_pending_res,
         }
 
     try:
@@ -429,7 +453,33 @@ def rebuild_job_summary(
             row.notified_at = stamp
         db.commit()
 
-    return {"saved": saved, "notify": {"job_title": job.title, **res}}
+    return {
+        "saved": saved,
+        "notify": {"job_title": job.title, **res},
+        "final_pending": final_pending_res,
+    }
+
+
+def _notify_boss_new_pending(
+    job: JobPosting, rows: list[RecruitmentSummary]
+) -> dict[str, Any]:
+    """把新进入「待终试」的候选人推给老板（卡片 + 待办）。绝不抛异常。"""
+    if not rows:
+        return {"status": "skipped", "reason": "无新进入待终试的候选人"}
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        item = notify_item(row)
+        item["job_title"] = job.title
+        scheduled = getattr(row, "final_interview_scheduled_at", None)
+        item["final_interview_scheduled_at"] = (
+            scheduled.strftime("%Y-%m-%d %H:%M") if scheduled else ""
+        )
+        items.append(item)
+    try:
+        return notify_final_pending(items=items)
+    except Exception:  # noqa: BLE001 - 外部依赖异常不得阻断落库
+        logger.exception("终试推送异常，已忽略")
+        return {"status": "failed", "reason": "内部异常"}
 
 
 def auto_rebuild_summary(job_id: Any, *, notify: bool = True) -> None:

@@ -68,6 +68,10 @@ class RecruitmentSummary(TimestampMixin, Base):
         String(32), nullable=False, default="none", index=True
     )
     final_interview_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # 老板确认的终面时间（老板在操作台安排/改期；NULL = 尚未安排）
+    final_interview_scheduled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     final_interview_decided_by: Mapped[str] = mapped_column(
         String(64), nullable=False, default=""
     )
