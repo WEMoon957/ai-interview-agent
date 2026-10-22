@@ -438,6 +438,8 @@
   .dim-fill.y{background:linear-gradient(90deg,rgba(251,191,36,.35),rgba(251,191,36,.95))}
   .dim-fill.r{background:linear-gradient(90deg,rgba(248,113,113,.35),rgba(248,113,113,.95))}
   .dim-val{font-variant-numeric:tabular-nums;font-size:var(--fs-2);color:#c2cde4;min-width:36px;text-align:right}
+  /* 「新」标记：该轴来自操作台模板新增维度，由 BI 自动纳入（无需手改配置） */
+  .dim-auto{display:inline-block;margin-left:4px;padding:0 4px;border-radius:6px;font-size:10px;font-style:normal;line-height:15px;color:#8fb3ff;background:rgba(79,140,255,.16);vertical-align:1px}
   .dim-modal-card{width:min(940px,100%)}
   .dim-modal-card .dim-actions{margin-left:auto;display:flex;gap:8px}
   .dim-modal-card .qa-x{margin-left:8px}
@@ -1672,7 +1674,7 @@
     const rows = state.dimRows
     const cols = axes.length + 4
     head.innerHTML = `<tr><th>候选人</th><th>岗位</th>${axes
-      .map((a) => `<th class="num">${esc(a.name)}</th>`)
+      .map((a) => `<th class="num"${a.auto ? ' title="操作台新增维度，已自动纳入看板"' : ''}>${esc(a.name)}${a.auto ? '<i class="dim-auto">新</i>' : ''}</th>`)
       .join('')}<th class="num">综合素质</th><th>结论</th><th>更新时间</th></tr>`
     if (!rows.length) {
       body.innerHTML = `<tr><td colspan="${cols}"><div class="state">暂无维度数据<small>候选人完成初筛 / AI 面试 / 线下复试后，这里会按统一维度汇总匹配度</small></div></td></tr>`
@@ -1706,7 +1708,7 @@
     })
     const otherNames = Object.keys(others)
     if (otherNames.length) {
-      items.push(`<b>${otherNames.length} 个维度未归入标准维度</b>（${otherNames.map(esc).join('、')}），需在 <code>bi/dim_config.json</code> 补映射后才会计入匹配度`)
+      items.push(`<b>${otherNames.length} 个维度未归入标准维度</b>（${otherNames.map(esc).join('、')}），未带维度名或配置异常；如属同义维度，可在 <code>bi/dim_config.json</code> 的 <code>name_map</code> 指定归属`)
     }
     const axisLen = (state.dimAxes || []).length
     const thin = Object.keys(state.dimBaseline || {})
@@ -1715,9 +1717,9 @@
     if (thin.length) {
       items.push(`岗位样本不足 3 人，均值基准仅供参考：${thin.map((b) => `${esc(b.job_title)}（${b.sample} 人）`).join('、')}`)
     }
-    const uncounted = (state.dimRows || []).filter((r) => (r.dim_count || 0) < axisLen).length
+    const uncounted = (state.dimRows || []).some((r) => (r.dim_count || 0) < axisLen)
     if (uncounted) {
-      items.push(`有 ${uncounted} 位候选人存在「未考察维度」（表格显示 —），系对应环节未评到该维度，并非 0 分`)
+      items.push('表格中的「—」表示该环节未评到该维度，并非 0 分；带「新」标记的列由操作台模板新增维度自动纳入')
     }
     if (!items.length) { el.hidden = true; el.innerHTML = ''; return }
     el.hidden = false
@@ -1738,7 +1740,7 @@
     return `<table class="dim-table">
       <thead><tr><th>维度</th><th class="num">匹配度</th><th class="num">简历初筛</th><th class="num">AI 面试</th><th class="num">线下复试</th><th class="num">岗位均值</th></tr></thead>
       <tbody>${state.dimAxes.map((a) => `<tr>
-        <td>${esc(a.name)}</td>
+        <td>${esc(a.name)}${a.auto ? '<i class="dim-auto">新</i>' : ''}</td>
         <td class="num" style="font-weight:600;color:#e3ebfa">${val(r.dims, a.key)}</td>
         <td class="num">${stage(a.key, 'screening')}</td>
         <td class="num">${stage(a.key, 'ai')}</td>
@@ -1835,6 +1837,9 @@
       ${tips.length ? `<div class="dim-note">${tips.join('<br/>')}</div>` : ''}`
     $('dimModal').hidden = false
     document.body.style.overflow = 'hidden'
+    // 维度轴会随模板新增维度自动增加（可能 10+ 根），轴多时把雷达图拉高，避免标签重叠
+    const radarBox = $('dimRadar')
+    if (radarBox) radarBox.style.height = `${Math.min(560, 320 + Math.max(0, state.dimAxes.length - 4) * 26)}px`
     // 弹层由 hidden 变可见后容器才有尺寸，必须等下一帧再初始化雷达图
     requestAnimationFrame(() => renderDimRadar(r))
   }
@@ -1878,7 +1883,8 @@
     let inst = null
     try {
       host = document.createElement('div')
-      host.style.cssText = 'position:fixed;left:-10000px;top:0;width:680px;height:440px'
+      const h = Math.min(760, 440 + Math.max(0, (state.dimAxes || []).length - 4) * 30)
+      host.style.cssText = `position:fixed;left:-10000px;top:0;width:680px;height:${h}px`
       document.body.appendChild(host)
       inst = echarts.init(host, null, { renderer: 'canvas' })
       inst.setOption(radarOption(r, theme))

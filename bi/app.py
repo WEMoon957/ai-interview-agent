@@ -36,6 +36,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -238,11 +239,40 @@ def _load_dim_config() -> dict:
     return DEFAULT_DIM_CONFIG
 
 
-DIM_CONFIG = _load_dim_config()
-DIM_AXES = [{"key": c.get("key"), "name": c.get("name") or c.get("key")}
-            for c in DIM_CONFIG.get("canonical") or []]
-DIM_KEYS = [a["key"] for a in DIM_AXES]
-DIM_NAMES = {a["key"]: a["name"] for a in DIM_AXES}
+DIM_CONFIG = _load_dim_config()  # 进程启动快照（保留给排查/兼容引用）
+
+# mtime + size 缓存：运维改完 dim_config.json 立即生效，不用重启/重建镜像
+_dim_config_cache: tuple[float, int, dict] | None = None
+_dim_config_lock = threading.Lock()
+
+
+def _dim_config() -> dict:
+    """读当前生效的维度配置（按文件 mtime/size 热更新）。"""
+    global _dim_config_cache
+    try:
+        st = os.stat(DIM_CONFIG_PATH)
+        stamp = (st.st_mtime, st.st_size)
+    except OSError:
+        return _dim_config_cache[2] if _dim_config_cache else DEFAULT_DIM_CONFIG
+    with _dim_config_lock:
+        if _dim_config_cache is not None and _dim_config_cache[:2] == stamp:
+            return _dim_config_cache[2]
+        cfg = _load_dim_config()
+        _dim_config_cache = (stamp[0], stamp[1], cfg)
+        return cfg
+
+
+def _axes_from_config(cfg: dict) -> list[dict]:
+    """把 canonical 列表转成前端用的维度轴（key/name/auto）。"""
+    return [
+        {
+            "key": c.get("key"),
+            "name": c.get("name") or c.get("key"),
+            "auto": bool(c.get("auto")),
+        }
+        for c in (cfg.get("canonical") or [])
+        if isinstance(c, dict) and c.get("key")
+    ]
 
 # 录用建议阈值（与后端 services/scoring.py::verdict_from_score 同口径）
 DIM_VERDICT_BANDS = ((80, "强烈推荐"), (65, "推荐"), (50, "待定"))
@@ -1416,18 +1446,109 @@ SELECT c.id::text AS cid,
 
 
 def _map_dim_key(stage: str, key: str, name: str, cfg: dict) -> str | None:
-    """把某环节的维度标识归并到标准维度 key；归并不上返回 None（落「其他」）。"""
+    """把某环节的维度标识归并到标准维度 key；归并不上返回 None（落「其他」）。
+
+    优先级：环节 key 映射（仅稳定 key，如 skill_match）→ 维度名精确映射
+    （模板自动登记 / 人工在 ``name_map`` 指定）→ 别名模糊匹配。
+    """
     k = (key or "").strip()
     nm = (name or "").strip()
     mapped = (cfg.get("stage_key_map") or {}).get(stage) or {}
     if k and k in mapped:
         return mapped[k]
+    name_map = cfg.get("name_map") or {}
+    if nm and nm in name_map:
+        return name_map[nm]
     alias = cfg.get("name_alias") or {}
     for canon, words in alias.items():
         for word in words or []:
             if word and (word in nm or word in k):
                 return canon
     return None
+
+
+def _auto_dim_key(name: str) -> str:
+    """为自动登记的维度生成稳定 key（同名同 key，跨模板复用）。"""
+    return "auto_" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:10]
+
+
+def _collect_template_dims(conn: psycopg.Connection, p: dict) -> list[tuple[str, str]]:
+    """读取「面试模板」里配置的评分维度（新模板优先），用于自动接进看板。
+
+    HR 在操作台新增维度后，这里立刻能读到；不必手工再去改 dim_config.json。
+    """
+    sql = """
+    SELECT t.rubric AS rubric
+      FROM interview_templates t
+      JOIN job_postings j ON j.id = t.job_id
+     WHERE %(scope_all)s::boolean
+        OR NOT (j.title LIKE ANY(%(test_patterns)s::text[]))
+     ORDER BY t.updated_at DESC, t.created_at DESC
+    """
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for row in _rows(conn, sql, p):
+        for d in row.get("rubric") or []:
+            if not isinstance(d, dict):
+                continue
+            name = str(d.get("name") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append((str(d.get("key") or "").strip(), name))
+    return out
+
+
+def _build_dim_config(
+    base_cfg: dict,
+    template_dims: list[tuple[str, str]] | None = None,
+    observed: list[tuple[str, str]] | None = None,
+) -> tuple[dict, list[dict]]:
+    """在静态配置之上叠加「自动映射」，返回 ``(cfg, axes)``。
+
+    规则（幂等，每次构建看板重算，不落库）：
+    1. 模板 / 历史数据里出现过的维度名，先按别名归并到标准维度（如「服务意识」→ 工作态度）；
+    2. 归并不上的，登记为该维度自己的轴（key=``auto_<hash>``，name 用原维度名），
+       看板直接出现这一列，不再落进「其他」被丢掉；
+    3. 同名维度即使在不同模板里 key 不同（``dim_0`` 是位置序号，不可靠），也归到同一根轴；
+    4. ``dim_config.json`` 的 ``name_map`` 可人工指定归属，优先级最高。
+    """
+    base_cfg = base_cfg or {}
+    cfg: dict = {
+        "canonical": [dict(c) for c in (base_cfg.get("canonical") or []) if isinstance(c, dict)],
+        "stage_key_map": {
+            k: dict(v) for k, v in (base_cfg.get("stage_key_map") or {}).items()
+        },
+        "name_alias": {k: list(v) for k, v in (base_cfg.get("name_alias") or {}).items()},
+        "name_map": dict(base_cfg.get("name_map") or {}),
+        "stage_weight": dict(base_cfg.get("stage_weight") or {}),
+    }
+    canon_keys = {c.get("key") for c in cfg["canonical"] if c.get("key")}
+    axes = _axes_from_config(cfg)
+
+    def register(key: str, name: str, stage: str) -> None:
+        nm = (name or "").strip()
+        if not nm:
+            return
+        canon = _map_dim_key(stage, key, nm, cfg)
+        if canon and canon in canon_keys:
+            cfg["name_map"][nm] = canon
+            return
+        new_key = _auto_dim_key(nm)
+        suffix = 2
+        while new_key in canon_keys:  # 哈希碰撞（几乎不可能）时加后缀
+            new_key = f"{_auto_dim_key(nm)}_{suffix}"
+            suffix += 1
+        cfg["canonical"].append({"key": new_key, "name": nm, "auto": True})
+        cfg["name_map"][nm] = new_key
+        canon_keys.add(new_key)
+        axes.append({"key": new_key, "name": nm, "auto": True})
+
+    for key, name in template_dims or []:
+        register(key, name, "ai")
+    for name, stage in observed or []:
+        register("", name, stage or "ai")
+    return cfg, axes
 
 
 def _normalize_dims(stage_dims: dict, cfg: dict) -> dict:
@@ -1490,12 +1611,13 @@ def _truncate(text: Any, limit: int = 220) -> str:
     return s if len(s) <= limit else s[:limit] + "…"
 
 
-def _q_dim_panel(conn, p, limit: int = 40) -> tuple[list[dict], dict]:
+def _q_dim_panel(conn, p, limit: int = 40) -> tuple[list[dict], dict, list[dict]]:
     """候选人维度匹配画像 + 岗位维度均值基准。
 
-    返回 ``(rows, baseline)``：
+    返回 ``(rows, baseline, axes)``：
       - rows：按最近活动倒序的候选人画像（上限 ``limit``）；
-      - baseline：``job_id -> {job_title, sample, dims}``，用于弹层雷达叠加岗位均值。
+      - baseline：``job_id -> {job_title, sample, dims}``，用于弹层雷达叠加岗位均值；
+      - axes：本次生效的维度轴（静态配置 + 模板/数据里自动发现的维度）。
     """
     stage_sources: dict[str, dict[str, dict]] = {}
     for stage, sql in (("screening", _DIM_SQL_SCREEN),
@@ -1503,9 +1625,26 @@ def _q_dim_panel(conn, p, limit: int = 40) -> tuple[list[dict], dict]:
                        ("offline", _DIM_SQL_OFFLINE)):
         stage_sources[stage] = {r["cid"]: r for r in _rows(conn, sql, p)}
 
+    # 自动映射：静态 dim_config + 模板 rubric（新维度立刻上轴）+ 历史数据里实际出现的维度名
+    template_dims = _collect_template_dims(conn, p)
+    observed: list[tuple[str, str]] = []
+    for stage in ("screening", "ai", "offline"):
+        for rec in stage_sources[stage].values():
+            dims = rec.get("dims") if isinstance(rec.get("dims"), list) else []
+            if stage == "offline" and not dims:
+                dims = rec.get("ai_dims") if isinstance(rec.get("ai_dims"), list) else []
+            for d in dims:
+                if isinstance(d, dict):
+                    nm = str(d.get("name") or "").strip()
+                    if nm:
+                        observed.append((nm, stage))
+    cfg, dim_axes = _build_dim_config(_dim_config(), template_dims, observed)
+    dim_keys = [a["key"] for a in dim_axes]
+    dim_names = {a["key"]: a["name"] for a in dim_axes}
+
     cids = sorted({cid for recs in stage_sources.values() for cid in recs})
     if not cids:
-        return [], {}
+        return [], {}, dim_axes
 
     meta_rows = {r["cid"]: r for r in _rows(conn, _DIM_SQL_META, {**p, "cids": cids})}
 
@@ -1530,7 +1669,7 @@ def _q_dim_panel(conn, p, limit: int = 40) -> tuple[list[dict], dict]:
         if not stage_dims:
             continue
 
-        norm = _normalize_dims(stage_dims, DIM_CONFIG)
+        norm = _normalize_dims(stage_dims, cfg)
         meta = meta_rows.get(cid) or {}
 
         is_walk_in = not meta.get("m_job_id") and bool(meta.get("o_job_id"))
@@ -1578,8 +1717,8 @@ def _q_dim_panel(conn, p, limit: int = 40) -> tuple[list[dict], dict]:
             best = max(rated, key=lambda kv: kv[1])
             worst = min(rated, key=lambda kv: kv[1])
             parts.append(
-                f"表现最佳：{DIM_NAMES.get(best[0], best[0])}（{best[1]}）；"
-                f"需重点关注：{DIM_NAMES.get(worst[0], worst[0])}（{worst[1]}）。"
+                f"表现最佳：{dim_names.get(best[0], best[0])}（{best[1]}）；"
+                f"需重点关注：{dim_names.get(worst[0], worst[0])}（{worst[1]}）。"
             )
 
         job_id = meta.get("m_job_id") or meta.get("o_job_id") or ""
@@ -1600,8 +1739,8 @@ def _q_dim_panel(conn, p, limit: int = 40) -> tuple[list[dict], dict]:
                 "stage": stage,
                 "source_label": "到店直招" if source == "walk_in" else "线上投递",
                 "summary": " ".join(parts),
-                "best": {"key": best[0], "name": DIM_NAMES.get(best[0], best[0]), "score": best[1]} if best else None,
-                "worst": {"key": worst[0], "name": DIM_NAMES.get(worst[0], worst[0]), "score": worst[1]} if worst else None,
+                "best": {"key": best[0], "name": dim_names.get(best[0], best[0]), "score": best[1]} if best else None,
+                "worst": {"key": worst[0], "name": dim_names.get(worst[0], worst[0]), "score": worst[1]} if worst else None,
                 "at": latest_at.astimezone(CN_TZ).strftime("%m-%d %H:%M") if latest_at else "",
                 "_sort": latest_at.timestamp() if latest_at else 0.0,
             }
@@ -1616,9 +1755,9 @@ def _q_dim_panel(conn, p, limit: int = 40) -> tuple[list[dict], dict]:
         jid = r.get("job_id")
         if not jid:
             continue
-        bucket = by_job.setdefault(jid, {"job_title": r.get("job_title") or "—", "ids": set(), "dims": {k: [] for k in DIM_KEYS}})
+        bucket = by_job.setdefault(jid, {"job_title": r.get("job_title") or "—", "ids": set(), "dims": {k: [] for k in dim_keys}})
         bucket["ids"].add(r["candidate_id"])
-        for k in DIM_KEYS:
+        for k in dim_keys:
             v = (r.get("dims") or {}).get(k)
             if v is not None:
                 bucket["dims"][k].append(v)
@@ -1633,7 +1772,7 @@ def _q_dim_panel(conn, p, limit: int = 40) -> tuple[list[dict], dict]:
 
     for r in rows:
         r.pop("_sort", None)
-    return rows, baseline
+    return rows, baseline, dim_axes
 
 
 # ── 组装 ─────────────────────────────────────────────────────
@@ -1669,7 +1808,7 @@ def build_dashboard(days: int, scope: str) -> dict:
         activity = _q_activity(conn, params)
         team = _q_team_activity(conn, params)
         interview_qa = _q_interview_qa(conn, params)
-        candidate_dims, job_dim_baseline = _q_dim_panel(conn, params)
+        candidate_dims, job_dim_baseline, dim_axes = _q_dim_panel(conn, params)
 
     # 到店直招没有汇总行，单独查出来合并进明细（问答列才有入口）
     recent = _merge_recent(recent, recent_walkin)
@@ -1729,7 +1868,7 @@ def build_dashboard(days: int, scope: str) -> dict:
         "interview_qa": interview_qa,
         "candidate_dims": candidate_dims,
         "job_dim_baseline": job_dim_baseline,
-        "dim_axes": DIM_AXES,
+        "dim_axes": dim_axes,
         "team": team,
         "team_summary": {
             "total": len(team),
@@ -1872,6 +2011,7 @@ _WATCH_TABLES = (
     "candidates",
     "resume_screenings",
     "interview_sessions",
+    "interview_templates",   # 操作台改评分维度后，看板秒级自动补上维度轴
     "session_reports",
     "offline_interviews",
     "recruitment_summaries",
