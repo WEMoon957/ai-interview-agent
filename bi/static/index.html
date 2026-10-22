@@ -291,6 +291,9 @@
   tbody tr:hover td:first-child{background:#152036}
   td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
   td.name{color:#e8eefc;font-weight:500}
+  /* 候选人姓名可点：打开面试记录（录音问答 / AI 面试） */
+  td.name .name-link{cursor:pointer;border-bottom:1px dashed rgba(147,185,255,.45)}
+  td.name .name-link:hover{color:#93b9ff;border-bottom-color:#93b9ff}
   td.job{max-width:220px;overflow:hidden;text-overflow:ellipsis;color:#9aa9c4}
   td.ts{color:var(--dim);font-size:var(--fs-2);font-variant-numeric:tabular-nums}
 
@@ -424,10 +427,19 @@
     background:rgba(251,191,36,.07);border-left:2px solid rgba(251,191,36,.5);
     border-radius:0 8px 8px 0;padding:3px 10px}
   /* AI 面试记录：逐题评分 chip / 追问标记 / 逐题评语 */
-  /* AI 面试记录：沿用问答行样式，但主色换成绿色，避免和「面试录音问答」混淆 */
-  #aiList .qa-row{border-left-color:var(--green)}
-  #aiList .qa-row:hover{background:rgba(52,211,153,.06);border-color:rgba(52,211,153,.38)}
-  #aiList .qa-count{color:#6ee7b7;background:rgba(52,211,153,.13);border-color:rgba(52,211,153,.28)}
+  /* 候选人面试记录：两个来源（录音问答 / AI 面试）共用同一弹层，用 tab 切换 */
+  .qa-tabs{display:flex;gap:6px;margin:0 0 12px;flex-wrap:wrap}
+  .qa-tabs button{appearance:none;border:1px solid var(--border);background:rgba(255,255,255,.03);
+    color:var(--muted);font:inherit;font-size:var(--fs-2);padding:5px 12px;border-radius:8px;
+    cursor:pointer;transition:background .16s,border-color .16s,color .16s}
+  .qa-tabs button span{margin-left:6px;font-size:var(--fs-1);opacity:.8}
+  .qa-tabs button.is-on{color:#e8eefc;border-color:rgba(79,140,255,.5);background:rgba(79,140,255,.16)}
+  .qa-tabs button:disabled{opacity:.42;cursor:not-allowed}
+  .qa-picks{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 10px}
+  .qa-picks-l{font-size:var(--fs-1);color:var(--dim);margin-right:2px}
+  .qa-pick{border:1px solid var(--border-soft);background:rgba(255,255,255,.02);color:#c2cde4;
+    font:inherit;font-size:var(--fs-1);padding:3px 9px;border-radius:999px;cursor:pointer}
+  .qa-pick.is-on{border-color:rgba(79,140,255,.45);background:rgba(79,140,255,.14);color:#dbe7ff}
   .qa-fu{flex:none;align-self:center;font-size:var(--fs-1);font-weight:500;color:#93c5fd;
     background:rgba(79,140,255,.14);border:1px solid rgba(79,140,255,.28);border-radius:999px;padding:0 8px}
   .qa-scores{margin:9px 0 0 22px;display:flex;flex-wrap:wrap;gap:6px}
@@ -436,6 +448,7 @@
   .qa-scores b{color:#e3ebfa;font-weight:700;margin-left:3px}
   .qa-comment{margin:8px 0 0 22px;font-size:var(--fs-1);line-height:1.7;color:#9fb0cc}
   .qa-comment b{color:#93b9ff;font-weight:600;margin-right:5px}
+  .qa-ai-meta{margin:0 0 10px}
   /* 候选人明细表里的「问答」入口 */
   .qa-btn{font:inherit;font-size:var(--fs-1);line-height:1.6;padding:2px 9px;border-radius:999px;cursor:pointer;
     white-space:nowrap;background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3);color:#fcd34d;
@@ -762,11 +775,6 @@
       <div class="qa-list" id="qaList"><div class="state is-loading">加载中…</div></div>
     </section>
 
-    <section class="panel span-12" style="--rule-accent:var(--green)" aria-label="AI 面试记录" data-view="ops">
-      <h2>AI 面试记录<span class="hint" id="aiHint">逐题原话留存 · 点击一行看问答与逐题评分</span></h2>
-      <div class="qa-list" id="aiList"><div class="state is-loading">加载中…</div></div>
-    </section>
-
     <section class="panel span-12" style="--rule-accent:var(--purple)" aria-label="候选人维度匹配" data-view="ops">
       <h2>候选人维度匹配<span class="hint" id="dimHint">统一维度 · 跨环节加权 · 点击一行看画像与综合素质</span></h2>
       <div class="table-wrap">
@@ -814,29 +822,16 @@
 
 <div class="qa-modal" id="qaModal" hidden>
   <div class="qa-mask" data-close></div>
-  <div class="qa-card" role="dialog" aria-modal="true" aria-label="面试问答详情">
+  <div class="qa-card" role="dialog" aria-modal="true" aria-label="候选人面试记录">
     <div class="qa-head">
       <div>
-        <h3 id="qaModalTitle">面试问答</h3>
+        <h3 id="qaModalTitle">面试记录</h3>
         <p class="qa-meta" id="qaModalMeta"></p>
       </div>
       <button class="qa-x" type="button" data-close aria-label="关闭">×</button>
     </div>
+    <div class="qa-tabs" id="qaTabs" role="tablist"></div>
     <div class="qa-body" id="qaModalBody"></div>
-  </div>
-</div>
-
-<div class="qa-modal" id="aiModal" hidden>
-  <div class="qa-mask" data-ai-close></div>
-  <div class="qa-card" role="dialog" aria-modal="true" aria-label="AI 面试记录详情">
-    <div class="qa-head">
-      <div>
-        <h3 id="aiModalTitle">AI 面试记录</h3>
-        <p class="qa-meta" id="aiModalMeta"></p>
-      </div>
-      <button class="qa-x" type="button" data-ai-close aria-label="关闭">×</button>
-    </div>
-    <div class="qa-body" id="aiModalBody"></div>
   </div>
 </div>
 
@@ -1465,17 +1460,29 @@
     const sc = (v) => (v == null ? '<span class="na">—</span>' : fmtScore(v))
     body.innerHTML = rows.map((r) => {
       const vc = VERDICT_CLASS[r.verdict] || 'n'
+      const hasRecords = r.has_records != null ? r.has_records : (r.has_qa || r.ai_count)
+      const qaBtn = r.has_qa
+        ? `<button class="qa-btn" type="button" data-candidate="${esc(r.candidate_id)}" data-tab="qa" title="查看该候选人的面试录音问答（含风险点）">${r.qa_count ? r.qa_count + ' 问' : '查看'}</button>`
+        : ''
+      const aiBtn = r.ai_count
+        ? `<button class="qa-btn" type="button" data-candidate="${esc(r.candidate_id)}" data-tab="ai" title="查看该候选人的 AI 面试逐题记录">AI ${r.ai_count} 场</button>`
+        : ''
+      const risk = r.risk_count
+        ? `<span class="qa-risk-n" title="该候选人面试回答中抽取到 ${r.risk_count} 处风险点">${r.risk_count} 风险</span>`
+        : ''
       return `<tr>
-        <td class="name">${r.candidate_name || '—'}</td>
-        <td class="job" title="${r.job_title || ''}">${r.job_title || '—'}</td>
+        <td class="name">${hasRecords
+          ? `<span class="name-link" data-candidate="${esc(r.candidate_id)}" title="查看面试记录（录音问答 / AI 面试）">${esc(r.candidate_name || '—')}</span>`
+          : esc(r.candidate_name || '—')}</td>
+        <td class="job" title="${esc(r.job_title || '')}">${esc(r.job_title || '—')}</td>
         <td class="num">${sc(r.screening_score)}</td>
         <td class="num">${sc(r.ai_score)}</td>
         <td class="num">${sc(r.offline_score)}</td>
         <td class="num" style="color:#e3ebfa;font-weight:600">${sc(r.final_score)}</td>
         <td>${r.verdict ? `<span class="tag ${vc}">${r.verdict}</span>` : '<span class="na">—</span>'}</td>
         <td><span class="tag n">${STAGE_LABEL[r.stage] || '其他状态'}</span></td>
-        <td>${r.has_qa
-          ? `<span class="qa-tags"><button class="qa-btn" type="button" data-candidate="${esc(r.candidate_id)}" title="查看该候选人的面试问答（含风险点）">${r.qa_count ? r.qa_count + ' 问' : '查看'}</button>${r.risk_count ? `<span class="qa-risk-n" title="该候选人面试回答中抽取到 ${r.risk_count} 处风险点">${r.risk_count} 风险</span>` : ''}</span>`
+        <td>${hasRecords
+          ? `<span class="qa-tags">${qaBtn}${aiBtn}${risk}</span>`
           : '<span class="na">—</span>'}</td>
         <td class="ts">${r.snapshot_at || '—'}</td>
       </tr>`
@@ -1621,18 +1628,80 @@
       </button>`).join('')
   }
 
-  function openQa(i) {
-    const r = state.qaRows[i]
-    if (!r) return
-    $('qaModalTitle').textContent = `面试问答 · ${r.candidate_name}`
-    $('qaModalMeta').textContent = `${r.job_title} · ${r.source_label} · 面试官 ${r.interviewer} · ${r.at}`
+  // ── 候选人面试记录（同一弹层切换：面试录音问答 / AI 面试）────
+  // 入口：①「面试录音问答」列表点某场；②「候选人汇总明细」点姓名或问答按钮。
+  // AI 面试逐题原话按场次懒加载并缓存在内存，切 tab / 切场次不重复请求。
+  const recState = { cid: '', tab: 'qa', qaId: '', aiId: '', aiCache: {}, aiLoading: '' }
+
+  function recordsOf(cid) {
+    return {
+      qa: (state.qaRows || []).filter((r) => r.candidate_id === cid),
+      ai: (state.aiRows || []).filter((r) => r.candidate_id === cid),
+    }
+  }
+
+  function openCandidateRecords(cid, opts) {
+    const o = opts || {}
+    const groups = recordsOf(cid)
+    const qa = groups.qa
+    const ai = groups.ai
+    const first = (state.recentRows || []).find((r) => r.candidate_id === cid) || qa[0] || ai[0]
+    recState.cid = cid
+    recState.tab = o.tab || (qa.length ? 'qa' : 'ai')
+    recState.qaId = o.qaId || (qa[0] && qa[0].id) || ''
+    recState.aiId = o.aiId || (ai[0] && ai[0].session_id) || ''
+    $('qaModalTitle').textContent = `面试记录 · ${(first && first.candidate_name) || '候选人'}`
+    const meta = [first && first.job_title]
+    if (qa.length) meta.push(`录音问答 ${qa.length} 场`)
+    if (ai.length) meta.push(`AI 面试 ${ai.length} 场`)
+    $('qaModalMeta').textContent = meta.filter(Boolean).join(' · ')
+    $('qaModal').hidden = false
+    document.body.style.overflow = 'hidden'
+    renderCandidateRecords()
+  }
+
+  function renderCandidateRecords() {
+    const groups = recordsOf(recState.cid)
+    const qa = groups.qa
+    const ai = groups.ai
+    const tabs = $('qaTabs')
+    if (tabs) {
+      const tab = (key, label, n) => `<button type="button" data-tab="${key}" class="${recState.tab === key ? 'is-on' : ''}"${n ? '' : ' disabled'}>${label}<span>${n}</span></button>`
+      tabs.innerHTML = tab('qa', '面试录音问答', qa.length) + tab('ai', 'AI 面试', ai.length)
+    }
+    const body = $('qaModalBody')
+    if (!body) return
+    if (recState.tab === 'qa') {
+      const rec = qa.find((r) => r.id === recState.qaId) || qa[0]
+      recState.qaId = rec ? rec.id : ''
+      body.innerHTML = (qa.length > 1 ? pickHtml('qa', qa) : '')
+        + (rec ? qaRecordHtml(rec) : '<div class="state">该候选人暂无录音问答<small>线下复试录音转写并抽取问答后会出现在这里</small></div>')
+      return
+    }
+    const sess = ai.find((r) => r.session_id === recState.aiId) || ai[0]
+    recState.aiId = sess ? sess.session_id : ''
+    body.innerHTML = (ai.length > 1 ? pickHtml('ai', ai) : '') + aiSessionHtml(sess)
+  }
+
+  function pickHtml(kind, rows) {
+    const items = rows.map((r) => {
+      const key = kind === 'qa' ? r.id : r.session_id
+      const on = (kind === 'qa' ? recState.qaId : recState.aiId) === key ? ' is-on' : ''
+      const label = kind === 'qa'
+        ? `${r.at || ''}${r.interviewer && r.interviewer !== '—' ? ' · ' + r.interviewer : ''}`
+        : `${r.at || ''}${r.score != null ? ' · ' + fmtScore(r.score) + ' 分' : ' · ' + r.status_label}`
+      return `<button type="button" class="qa-pick${on}" data-pick="${kind}" data-key="${esc(key)}">${esc(label)}</button>`
+    }).join('')
+    return `<div class="qa-picks"><span class="qa-picks-l">${kind === 'qa' ? '录音场次' : 'AI 场次'}</span>${items}</div>`
+  }
+
+  // 录音问答：整场总评 + 逐题（回答摘要 / 原话 / 亮点 / 风险点）
+  function qaRecordHtml(r) {
     const qs = r.questions || []
     const overall = r.overall ? `<div class="qa-overall"><b>整体表现</b>${esc(r.overall)}</div>` : ''
-    // 整场风险汇总：放在整体表现下方，先看风险再逐题复盘
     const overallRisk = r.overall_risks
       ? `<div class="qa-overall qa-overall-risk"><b>需复核风险</b>${esc(r.overall_risks)}</div>`
       : ''
-    // 旧版抽取没有 risks 维度：明确提示「未含风险点」，避免被误读成「本场无风险」
     const stale = (r.has_risk_data === false)
       ? '<div class="qa-stale">该记录为旧版抽取结果，未包含风险点维度。重抽这条记录后即可补齐（scripts/extract_interview_qa.py --all --force）。</div>'
       : ''
@@ -1654,95 +1723,46 @@
         ${risks}
       </div>`
     }).join('')
-    $('qaModalBody').innerHTML = overall + overallRisk + stale + (pairs || '<div class="state">该记录未抽取到问答</div>')
-    $('qaModal').hidden = false
-    document.body.style.overflow = 'hidden'
+    return overall + overallRisk + stale + (pairs || '<div class="state">该记录未抽取到问答</div>')
   }
 
-  // 从「候选人汇总明细」点问答按钮进来：按候选人找最新一条问答记录
-  // （同一个人可能有多场线下复试，列表已按时间倒序，取第一条即最新）
-  function openQaByCandidate(cid) {
-    const i = state.qaRows.findIndex((r) => r.candidate_id === cid)
-    if (i >= 0) {
-      openQa(i)
-      return
+  // AI 面试：按场次懒加载逐题原话；失败也缓存，避免反复重试
+  function aiSessionHtml(s) {
+    if (!s) return '<div class="state">该候选人暂无 AI 面试记录<small>候选人开始作答后，逐题原话会自动留存</small></div>'
+    const cached = recState.aiCache[s.session_id]
+    if (cached) return aiDetailHtml(cached)
+    if (recState.aiLoading !== s.session_id) {
+      recState.aiLoading = s.session_id
+      fetch(`/api/ai-interview?session_id=${encodeURIComponent(s.session_id)}`, { credentials: 'same-origin' })
+        .then((res) => res.json())
+        .then((j) => {
+          if (!j || j.code !== 0 || !j.data) throw new Error((j && j.message) || '加载失败')
+          recState.aiCache[s.session_id] = j.data
+        })
+        .catch((err) => {
+          recState.aiCache[s.session_id] = { error: (err && err.message) || '加载失败' }
+        })
+        .then(() => {
+          recState.aiLoading = ''
+          if (recState.tab === 'ai' && recState.aiId === s.session_id) renderCandidateRecords()
+        })
     }
-    $('qaModalTitle').textContent = '面试问答'
-    $('qaModalMeta').textContent = '未取到该候选人的问答记录'
-    $('qaModalBody').innerHTML = '<div class="state">暂无问答可展示<small>逐字稿转写完成后会自动抽取</small></div>'
-    $('qaModal').hidden = false
-    document.body.style.overflow = 'hidden'
+    return '<div class="state is-loading">加载 AI 面试逐题原话…</div>'
   }
 
-  function closeQa() {
-    const m = $('qaModal')
-    if (m) m.hidden = true
-    document.body.style.overflow = ''
-  }
-
-  // ── AI 面试记录（逐题原话 + 逐题评分）──────────────────────
-  // 列表来自 /api/dashboard 的 ai_interviews（轻量：得分/题数/状态）；
-  // 点开某场再按需拉 /api/ai-interview?session_id=，避免每次刷新都搬运全量回答原文。
-  function renderAiInterviews(d) {
-    state.aiRows = (d && d.ai_interviews) || []
-    const box = $('aiList')
-    if (!box) return
-    if (!state.aiRows.length) {
-      box.innerHTML = '<div class="state">暂无 AI 面试记录<small>候选人开始作答后，逐题原话会自动留存到这里</small></div>'
-      return
-    }
-    box.innerHTML = state.aiRows.map((r, i) => {
-      const tail = r.status === 'finished'
-        ? (r.score != null ? `${fmtScore(r.score)} 分${r.verdict ? ' · ' + r.verdict : ''}` : (r.verdict || '已完成'))
-        : r.status_label
-      const count = r.turn_count
-        ? `${r.turn_count} 问${r.follow_up_count ? `（含 ${r.follow_up_count} 次追问）` : ''}`
-        : '暂无原话'
-      const dur = r.duration_min != null ? ` · 用时 ${r.duration_min < 1 ? '不足 1' : r.duration_min} 分钟` : ''
-      return `<button class="qa-row" type="button" data-ai="${i}">
-        <span class="qa-main">
-          <span class="qa-name">${esc(r.candidate_name)}</span>
-          <span class="qa-sub">${esc(r.job_title)} · ${esc(r.status_label)} · ${count} · ${esc(r.at)}${dur}</span>
-        </span>
-        <span class="qa-tags"><span class="qa-count">${esc(tail)}</span></span>
-        <span class="qa-go" aria-hidden="true">›</span>
-      </button>`
-    }).join('')
-  }
-
-  function openAi(i) {
-    const r = state.aiRows[i]
-    if (!r) return
-    $('aiModalTitle').textContent = `AI 面试记录 · ${r.candidate_name}`
-    $('aiModalMeta').textContent = [r.job_title, r.status_label, r.at].filter(Boolean).join(' · ')
-    $('aiModalBody').innerHTML = '<div class="state is-loading">加载逐题原话…</div>'
-    $('aiModal').hidden = false
-    document.body.style.overflow = 'hidden'
-    fetch(`/api/ai-interview?session_id=${encodeURIComponent(r.session_id)}`, { credentials: 'same-origin' })
-      .then((res) => res.json())
-      .then((j) => {
-        if (!j || j.code !== 0 || !j.data) throw new Error((j && j.message) || '加载失败')
-        renderAiDetail(j.data)
-      })
-      .catch((err) => {
-        $('aiModalBody').innerHTML = `<div class="state">加载失败<small>${esc(err && err.message ? err.message : String(err))}</small></div>`
-      })
-  }
-
-  function renderAiDetail(d) {
-    $('aiModalTitle').textContent = `AI 面试记录 · ${d.candidate_name}`
-    const meta = [d.job_title, d.status_label]
-    if (d.started_at) meta.push(d.started_at)
-    if (d.duration_min != null) meta.push(`用时 ${d.duration_min < 1 ? '不足 1' : d.duration_min} 分钟`)
-    if (d.score != null) meta.push(`总分 ${fmtScore(d.score)}${d.verdict ? ' · ' + d.verdict : ''}`)
-    $('aiModalMeta').textContent = meta.filter(Boolean).join(' · ')
-
+  function aiDetailHtml(d) {
+    if (d.error) return `<div class="state">加载失败<small>${esc(d.error)}</small></div>`
     const summary = d.summary ? `<div class="qa-overall"><b>AI 面试总评</b>${esc(d.summary)}</div>` : ''
     const turns = d.turns || []
     if (!turns.length) {
-      $('aiModalBody').innerHTML = summary + '<div class="state">该场次暂无逐题原话<small>逐题原话留存上线前的历史场次无法补齐；新场次会自动记录</small></div>'
-      return
+      return summary + '<div class="state">该场次暂无逐题原话<small>逐题原话留存上线前的历史场次无法补齐；新场次会自动记录</small></div>'
     }
+    const meta = [
+      d.started_at,
+      d.duration_min != null ? `用时 ${d.duration_min < 1 ? '不足 1' : d.duration_min} 分钟` : '',
+      d.score != null ? `总分 ${fmtScore(d.score)}${d.verdict ? ' · ' + d.verdict : ''}` : '',
+    ].filter(Boolean)
+    const metaHtml = meta.length ? `<div class="qa-meta qa-ai-meta">${esc(meta.join(' · '))}</div>` : ''
     const pairs = turns.map((t) => {
       const scores = (t.scores && t.scores.length)
         ? `<div class="qa-scores">${t.scores
@@ -1758,11 +1778,23 @@
         ${comment}
       </div>`
     }).join('')
-    $('aiModalBody').innerHTML = summary + pairs
+    return summary + metaHtml + pairs
   }
 
-  function closeAi() {
-    const m = $('aiModal')
+  // 从「面试录音问答」列表点某场：定位到该候选人的该场记录
+  function openQa(i) {
+    const r = state.qaRows[i]
+    if (!r) return
+    openCandidateRecords(r.candidate_id, { tab: 'qa', qaId: r.id })
+  }
+
+  // 从「候选人汇总明细」点姓名 / 问答按钮：默认录音问答，没有则直接落到 AI 面试
+  function openQaByCandidate(cid, tab) {
+    openCandidateRecords(cid, tab ? { tab } : undefined)
+  }
+
+  function closeQa() {
+    const m = $('qaModal')
     if (m) m.hidden = true
     document.body.style.overflow = ''
   }
@@ -2123,7 +2155,10 @@
     renderRecent(d)
     renderFeed(d)
     renderInterviewQa(d)
-    renderAiInterviews(d)
+    state.aiRows = d.ai_interviews || []
+    // 弹层没开着时清掉逐题原话缓存：下一场面试/新轮次能在下次打开时看到
+    const qaModalOpen = $('qaModal') && !$('qaModal').hidden
+    if (!qaModalOpen) recState.aiCache = {}
     renderDimPanel(d)
 
     state.lastSuccess = new Date()
@@ -2304,7 +2339,7 @@
     setView(btn.dataset.view)
   })
 
-  // 面试录音问答：点行打开弹层；支持遮罩、关闭按钮、Esc 关闭
+  // 面试录音问答：点行打开「候选人面试记录」弹层并定位到该场
   const qaListEl = $('qaList')
   if (qaListEl) {
     qaListEl.addEventListener('click', (e) => {
@@ -2312,33 +2347,31 @@
       if (row) openQa(Number(row.dataset.qa))
     })
   }
-  // 候选人汇总明细：点「问答」列按钮，直接看这个人的面试问答
+  // 候选人汇总明细：点姓名或「问答 / AI 面试」按钮，打开同一个弹层（按入口切默认 tab）
   const recentBodyEl = $('recentBody')
   if (recentBodyEl) {
     recentBodyEl.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-candidate]')
-      if (btn) openQaByCandidate(btn.dataset.candidate)
+      if (btn) openQaByCandidate(btn.dataset.candidate, btn.dataset.tab)
     })
   }
+  // 弹层内：关闭 / 切 tab / 切场次（录音场次、AI 场次都用 data-pick）
   const qaModalEl = $('qaModal')
   if (qaModalEl) {
     qaModalEl.addEventListener('click', (e) => {
-      if (e.target.closest('[data-close]')) closeQa()
-    })
-  }
-
-  // AI 面试记录：点行按需拉取逐题原话；遮罩 / 关闭按钮 / Esc 关闭
-  const aiListEl = $('aiList')
-  if (aiListEl) {
-    aiListEl.addEventListener('click', (e) => {
-      const row = e.target.closest('[data-ai]')
-      if (row) openAi(Number(row.dataset.ai))
-    })
-  }
-  const aiModalEl = $('aiModal')
-  if (aiModalEl) {
-    aiModalEl.addEventListener('click', (e) => {
-      if (e.target.closest('[data-ai-close]')) closeAi()
+      if (e.target.closest('[data-close]')) { closeQa(); return }
+      const tab = e.target.closest('[data-tab]')
+      if (tab) {
+        recState.tab = tab.dataset.tab
+        renderCandidateRecords()
+        return
+      }
+      const pick = e.target.closest('[data-pick]')
+      if (pick) {
+        if (pick.dataset.pick === 'qa') recState.qaId = pick.dataset.key
+        else recState.aiId = pick.dataset.key
+        renderCandidateRecords()
+      }
     })
   }
 
@@ -2362,7 +2395,7 @@
   if (dimExportPdfEl) dimExportPdfEl.addEventListener('click', exportDimPdf)
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closeQa(); closeAi(); closeDim() }
+    if (e.key === 'Escape') { closeQa(); closeDim() }
   })
 
   // ── 实时通道（SSE）──────────────────────

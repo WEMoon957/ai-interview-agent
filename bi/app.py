@@ -1000,7 +1000,8 @@ def _q_recent(conn, p, limit: int = 25) -> list[dict]:
            m.stage                        AS stage,
            m.snapshot_at                  AS snapshot_at,
            coalesce(qa.n, 0)              AS qa_count,
-           coalesce(qa.risk_n, 0)         AS risk_count
+           coalesce(qa.risk_n, 0)         AS risk_count,
+           coalesce(ai.n, 0)              AS ai_count
       FROM recruitment_summaries m
       JOIN job_postings j ON j.id = m.job_id
       JOIN cohort co ON co.id = m.candidate_id
@@ -1017,6 +1018,13 @@ def _q_recent(conn, p, limit: int = 25) -> list[dict]:
              WHERE oi.candidate_id = co.id
                AND jsonb_typeof(oi.qa_extract -> 'questions') = 'array'
       ) qa ON TRUE
+      -- 该候选人开始过的 AI 面试场次：没有录音问答时也能从明细点开「AI 面试记录」
+      LEFT JOIN LATERAL (
+            SELECT count(*)::int AS n
+              FROM interview_sessions s
+             WHERE s.candidate_id = co.id
+               AND s.started_at IS NOT NULL
+      ) ai ON TRUE
      ORDER BY m.snapshot_at DESC
      LIMIT %(limit)s
     """
@@ -1040,6 +1048,8 @@ def _q_recent(conn, p, limit: int = 25) -> list[dict]:
                 "has_qa": qa_count > 0,
                 "qa_count": qa_count,
                 "risk_count": _int(r["risk_count"]) or 0,
+                "ai_count": _int(r["ai_count"]) or 0,
+                "has_records": qa_count > 0 or _int(r["ai_count"]) > 0,
             }
         )
     return out
@@ -1068,7 +1078,11 @@ def _q_walkin_qa(conn, p, limit: int = 25) -> list[dict]:
                              THEN (SELECT coalesce(sum(jsonb_array_length(q -> 'risks')), 0)
                                      FROM jsonb_array_elements(o.qa_extract -> 'questions') q
                                     WHERE jsonb_typeof(q -> 'risks') = 'array')
-                             ELSE 0 END), 0)::int                   AS risk_count
+                             ELSE 0 END), 0)::int                   AS risk_count,
+           (SELECT count(*)::int
+              FROM interview_sessions s
+             WHERE s.candidate_id = co.id
+               AND s.started_at IS NOT NULL)                       AS ai_count
       FROM offline_interviews o
       JOIN candidates co ON co.id = o.candidate_id
       JOIN job_postings j ON j.id = o.job_id
@@ -1098,6 +1112,8 @@ def _q_walkin_qa(conn, p, limit: int = 25) -> list[dict]:
                 "has_qa": qa_count > 0,
                 "qa_count": qa_count,
                 "risk_count": _int(r["risk_count"]) or 0,
+                "ai_count": _int(r["ai_count"]) or 0,
+                "has_records": qa_count > 0 or _int(r["ai_count"]) > 0,
             }
         )
     return out
