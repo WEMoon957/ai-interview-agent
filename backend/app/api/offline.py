@@ -424,8 +424,9 @@ def bind_minutes(offline_id: str, payload: MinutesBind, db: Session = Depends(ge
     **不依赖妙记标题**，因此标题写什么都不影响转写——这是标题写错/漏写时的兜底。
 
     正常路径由后台轮询按候选人姓名自动匹配，本接口用于：轮询未命中时手动补救、
-    或 failed 记录重试。转写能否成功取决于权限：私有妙记需要归属人已授权，
-    否则降级 bot 只能读已公开妙记。
+    或 failed 记录重试。**不要求妙记归属与记录一致**：转写会依次尝试记录归属人、
+    系统里其他已授权账号、bot 身份，只要有一个能看这条妙记即可；全部无权时返回
+    可操作的提示（让所有者把妙记设为「组织内可见」或分享给 HR）。
     """
     oid = _parse_uuid(offline_id, "offline_id")
     row = db.get(OfflineInterview, oid)

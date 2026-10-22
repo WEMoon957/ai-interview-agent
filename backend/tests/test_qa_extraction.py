@@ -176,7 +176,7 @@ QA = {
 
 def _prepare(monkeypatch, qa_result=None, qa_exc=None):
     """把转写/评分/抽取全部打桩，只验证编排与落库。"""
-    monkeypatch.setattr(mp, "_resolve_owner_token", lambda db, row, settings: ("ou_test", "user-token"))
+    monkeypatch.setattr(mp, "_candidate_tokens", lambda db, row, settings: [("ou_test", "user-token")])
     monkeypatch.setattr(mp, "get_transcript", lambda token, **kwargs: (True, "逐字稿正文", None))
     monkeypatch.setattr(mp, "_resolve_rubric", lambda db, row: [])
     monkeypatch.setattr(mp, "auto_rebuild_summary", lambda *args, **kwargs: None)
@@ -225,7 +225,7 @@ def test_transcript_failure_skips_extraction(monkeypatch):
     """拉不到逐字稿时置 failed 并直接返回 False，不进评分/抽取阶段。"""
     called = {"score": 0, "extract": 0}
 
-    monkeypatch.setattr(mp, "_resolve_owner_token", lambda db, row, settings: (None, None))
+    monkeypatch.setattr(mp, "_candidate_tokens", lambda db, row, settings: [("", None)])
     monkeypatch.setattr(mp, "get_transcript", lambda token, **kwargs: (False, "", "2091005"))
     monkeypatch.setattr(mp, "score_whole_interview", lambda *a, **k: called.__setitem__("score", called["score"] + 1))
     monkeypatch.setattr(mp, "extract_interview_qa", lambda *a, **k: called.__setitem__("extract", called["extract"] + 1))

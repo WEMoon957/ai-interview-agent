@@ -123,7 +123,7 @@ def _owner_open_id(row: OfflineInterview, settings: Settings) -> str:
 def _resolve_owner_token(
     db, row: OfflineInterview, settings: Settings
 ) -> tuple[str, str | None]:
-    """解析「归属人 + 可用 user token」。
+    """解析「归属人 + 可用 user token」（**搜索用**，必须按 owner 过滤）。
 
     过渡期兜底：记录上没写归属人、且系统里**只有一个**有效授权时，直接用该授权
     （典型场景：先只开 HR 一个人的通道）。多个授权时不猜，避免读错人的妙记。
@@ -142,6 +142,41 @@ def _resolve_owner_token(
     return owner_id, None
 
 
+def _candidate_tokens(
+    db, row: OfflineInterview, settings: Settings
+) -> list[tuple[str, str | None]]:
+    """**转写用**：按优先级列出可尝试的身份，逐个试到能读为止。
+
+    与搜索不同，读某一条具体妙记时不需要"归属人正确"——只要系统里**任何**一个
+    已授权账号能看这条妙记就行。所以顺序为：
+    ① 记录归属人（最可能是录音者本人，一次命中）
+    ② 其余有效授权（HR / 店长 / 老板，谁被分享过谁能读）
+    ③ bot 身份（只能读已公开妙记，兜底）
+
+    这样"粘贴任何人的妙记链接"都能转写，除非该妙记没分享给系统里任何人。
+    """
+    candidates: list[tuple[str, str | None]] = []
+    seen: set[str] = set()
+
+    owner_id = _owner_open_id(row, settings)
+    if owner_id:
+        token = get_valid_user_token(db, owner_id, settings)
+        if token:
+            candidates.append((owner_id, token))
+            seen.add(owner_id)
+
+    for auth in list_authorizations(db):
+        if auth.status != "active" or auth.open_id in seen:
+            continue
+        token = get_valid_user_token(db, auth.open_id, settings)
+        if token:
+            candidates.append((auth.open_id, token))
+            seen.add(auth.open_id)
+
+    candidates.append(("", None))  # bot：tenant_access_token，仅公开妙记
+    return candidates
+
+
 def transcribe_and_score(
     db, row: OfflineInterview, settings: Settings | None = None
 ) -> bool:
@@ -155,30 +190,67 @@ def transcribe_and_score(
     return ok
 
 
+def _explain_transcript_error(err: str, attempted: list[str]) -> str:
+    """把飞书的技术错误翻译成用户能照着做的提示。"""
+    raw = (err or "").strip()
+    tried = "、".join(attempted) if attempted else "-"
+
+    if "2091005" in raw or "permission deny" in raw.lower():
+        return (
+            f"该妙记没有对系统里任何一个已授权账号开放（已尝试：{tried}）。"
+            "请让妙记所有者在飞书里把这条妙记设为「组织内可见」，"
+            "或直接分享给 HR，然后重新粘贴即可。"
+        )
+    if "HTTP 404" in raw:
+        return (
+            f"妙记不存在或已删除（已尝试：{tried}）。请确认链接是否有效，"
+            "或重新从飞书复制妙记链接。"
+        )
+    if "未配置" in raw:
+        return f"飞书应用凭据未配置，请联系管理员检查 FEISHU_APP_ID / FEISHU_APP_SECRET。原始错误：{raw}"
+    return f"拉取失败（已尝试：{tried}）：{raw}"
+
+
 def transcribe_and_score_detailed(
     db, row: OfflineInterview, settings: Settings | None = None
 ) -> tuple[bool, str]:
     """``transcribe_and_score`` 的带原因版本：返回 (是否成功, 失败原因)。
 
-    失败原因直接透给手动绑定接口，避免店长只看到「转写失败」却不知道是权限问题。
+    读取身份按 ``_candidate_tokens`` 的顺序逐个尝试（归属人 → 其他授权 → bot），
+    因此**粘贴谁的妙记链接都能转**，只要该妙记对系统里某个已授权账号可见。
+    全部失败时把最后一个错误透给手动绑定接口，让用户知道该去分享妙记而不是重试。
     """
     settings = settings or get_settings()
-    owner_id, user_token = _resolve_owner_token(db, row, settings)
 
-    ok, text, err = get_transcript(
-        row.minutes_token, settings=settings, access_token=user_token
-    )
+    ok = False
+    text = ""
+    err = ""
+    used_by = ""
+    attempted: list[str] = []
+    for open_id, token in _candidate_tokens(db, row, settings):
+        label = open_id or "bot"
+        attempted.append(label)
+        ok, text, err = get_transcript(
+            row.minutes_token, settings=settings, access_token=token
+        )
+        if ok:
+            used_by = label
+            break
+
     if not ok:
         row.transcript_status = "failed"
         db.commit()
         logger.warning(
-            "拉取妙记逐字稿失败 minute=%s owner=%s user_token=%s err=%s",
+            "拉取妙记逐字稿失败 minute=%s 尝试身份=%s err=%s",
             row.minutes_token,
-            owner_id or "-",
-            "yes" if user_token else "no",
+            ",".join(attempted) or "-",
             err,
         )
-        return False, err
+        return False, _explain_transcript_error(err, attempted)
+
+    logger.info(
+        "妙记逐字稿拉取成功 minute=%s 使用身份=%s", row.minutes_token, used_by
+    )
 
     now = datetime.now(timezone.utc)
     row.transcript_text = text

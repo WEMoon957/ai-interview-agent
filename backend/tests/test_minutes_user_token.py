@@ -300,8 +300,10 @@ def test_transcribe_and_score_passes_owner_user_token():
     db = _DB()
     with (
         patch.object(mp, "get_valid_user_token", return_value="u-1") as get_token,
+        patch.object(mp, "list_authorizations", return_value=[]),
         patch.object(mp, "get_transcript", return_value=(True, "逐字稿", "")) as get_transcript,
         patch.object(mp, "score_whole_interview", return_value={"total_score": None}),
+        patch.object(mp, "extract_interview_qa", return_value={"questions": []}),
     ):
         assert mp.transcribe_and_score(db, row, _settings()) is True
 
@@ -309,3 +311,96 @@ def test_transcribe_and_score_passes_owner_user_token():
     assert get_transcript.call_args.kwargs["access_token"] == "u-1"
     assert row.transcript_status == "transcribed"
     assert row.transcript_text == "逐字稿"
+
+
+# ── 转写身份兜底：粘贴谁的链接都能转 ───────────────────────
+def _transcribe_row():
+    return SimpleNamespace(
+        minutes_token="obcnAny",
+        interviewer_open_id="ou_a",
+        transcript_status="matched",
+        transcript_text=None,
+        transcript_at=None,
+        job=None,
+        job_id=None,
+        ai_score=None,
+        ai_dim_scores=[],
+        ai_comment="",
+        ai_scored_at=None,
+    )
+
+
+def test_transcribe_tries_other_authorizations():
+    """归属人读不到（不是他录的）→ 换系统里其他已授权账号再试，仍然成功。"""
+    row = _transcribe_row()
+    auths = [_auth_row(open_id="ou_a"), _auth_row(open_id="ou_b")]
+    calls = []
+
+    def fake_transcript(_minute_token, **kw):
+        token = kw.get("access_token")
+        calls.append(token)
+        if token == "u-b":
+            return True, "逐字稿", ""
+        return False, "", 'HTTP 403：{"code":2091005,"msg":"permission deny"}'
+
+    def fake_token(_db, open_id, _s):
+        return {"ou_a": "u-a", "ou_b": "u-b"}.get(open_id)
+
+    with (
+        patch.object(mp, "get_valid_user_token", side_effect=fake_token),
+        patch.object(mp, "list_authorizations", return_value=auths),
+        patch.object(mp, "get_transcript", side_effect=fake_transcript),
+        patch.object(mp, "score_whole_interview", return_value={"total_score": None}),
+        patch.object(mp, "extract_interview_qa", return_value={"questions": []}),
+    ):
+        ok, err = mp.transcribe_and_score_detailed(_DB(), row, _settings())
+
+    assert ok is True and err == ""
+    assert calls == ["u-a", "u-b"]  # 先本人，再换人
+    assert row.transcript_text == "逐字稿"
+
+
+def test_transcribe_falls_back_to_bot_last():
+    """所有 user 授权都失败 → 最后用 bot 兜底（公开妙记）。"""
+    row = _transcribe_row()
+    auths = [_auth_row(open_id="ou_a")]
+    seen = []
+
+    def fake_transcript(_minute_token, **kw):
+        token = kw.get("access_token")
+        seen.append(token)
+        if token is None:
+            return True, "公开逐字稿", ""
+        return False, "", "HTTP 403"
+
+    with (
+        patch.object(mp, "get_valid_user_token", return_value="u-a"),
+        patch.object(mp, "list_authorizations", return_value=auths),
+        patch.object(mp, "get_transcript", side_effect=fake_transcript),
+        patch.object(mp, "score_whole_interview", return_value={"total_score": None}),
+        patch.object(mp, "extract_interview_qa", return_value={"questions": []}),
+    ):
+        ok, _ = mp.transcribe_and_score_detailed(_DB(), row, _settings())
+
+    assert ok is True
+    assert seen[-1] is None  # bot 是最后一档
+
+
+def test_transcribe_all_failed_explains_how_to_share():
+    """全部身份都无权限时，提示要「组织内可见 / 分享给 HR」，而不是干巴巴的 403。"""
+    row = _transcribe_row()
+    with (
+        patch.object(mp, "get_valid_user_token", return_value="u-a"),
+        patch.object(mp, "list_authorizations", return_value=[_auth_row(open_id="ou_a")]),
+        patch.object(
+            mp,
+            "get_transcript",
+            return_value=(False, "", 'HTTP 403：{"code":2091005,"msg":"permission deny"}'),
+        ),
+    ):
+        ok, err = mp.transcribe_and_score_detailed(_DB(), row, _settings())
+
+    assert ok is False
+    assert "组织内可见" in err
+    assert row.transcript_status == "failed"
+
