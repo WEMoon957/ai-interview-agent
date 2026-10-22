@@ -105,7 +105,7 @@
               {{ transcriptStatusText(row.transcript_status) }}
             </el-tag>
             <el-button
-              v-if="['none', 'pending', 'failed'].includes(row.transcript_status)"
+              v-if="['none', 'pending', 'failed', 'insufficient'].includes(row.transcript_status)"
               size="small"
               text
               type="primary"
@@ -120,6 +120,12 @@
             <template v-if="row.ai_score != null">
               <span class="score" :class="scoreClass(row.ai_score)">{{ row.ai_score.toFixed(1) }}</span>
             </template>
+            <el-tooltip
+              v-else-if="row.transcript_status === 'insufficient'"
+              :content="row.ai_comment || '逐字稿没有可评估内容，未生成参考分'"
+            >
+              <span class="muted" style="border-bottom: 1px dashed currentColor">不可评</span>
+            </el-tooltip>
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
@@ -531,6 +537,7 @@ function transcriptStatusText(s) {
     pending: '待录音',
     matched: '转写中',
     transcribed: '已转写',
+    insufficient: '内容不足',
     failed: '转写失败',
   }[s] || s || '未开启'
 }
@@ -540,6 +547,7 @@ function transcriptStatusType(s) {
     pending: 'warning',
     matched: 'warning',
     transcribed: 'success',
+    insufficient: 'danger',
     failed: 'danger',
   }[s] || 'info'
 }

@@ -45,6 +45,7 @@ from app.services.audio_storage import audio_abs_path, delete_audio
 from app.services.feishu_minutes import extract_minute_token, generate_walk_in_code
 from app.services.minutes_poller import transcribe_and_score_detailed
 from app.services.summary import auto_rebuild_summary
+from app.services.whole_interview_scoring import assess_transcript
 
 logger = logging.getLogger(__name__)
 
@@ -463,6 +464,16 @@ def adopt_ai_score(offline_id: str, payload: AdoptAiScore, db: Session = Depends
         raise BizError(404, "线下复试记录不存在", http_status=404)
     if row.ai_score is None:
         raise BizError(409, "暂无 AI 参考分可采纳", http_status=409)
+    # 双保险：逐字稿没有可评估内容时，AI 分是编出来的（历史脏数据也可能带分），
+    # 不允许一键采纳成人工评分 —— 否则「录音里什么都没有」会变成正式结论。
+    if row.transcript_text is not None:
+        gate = assess_transcript(row.transcript_text)
+        if not gate["scorable"]:
+            raise BizError(
+                409,
+                f"该记录的逐字稿没有可评估内容（{gate['reason']}），AI 参考分不可信，请人工打分",
+                http_status=409,
+            )
     if payload.decision and payload.decision not in VALID_DECISION:
         raise BizError(422, "录用结论无效（pass / hold / reject）", http_status=422)
 

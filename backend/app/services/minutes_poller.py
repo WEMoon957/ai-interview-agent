@@ -266,11 +266,28 @@ def transcribe_and_score_detailed(
         if result.get("total_score") is not None:
             row.ai_score = result["total_score"]
             row.ai_dim_scores = result["dim_scores"] or []
-            row.ai_comment = result.get("comment") or ""
+            comment = result.get("comment") or ""
+            if result.get("reliability") == "low":
+                comment = f"（逐字稿偏短，参考性有限）{comment}"
+            row.ai_comment = comment
             row.ai_scored_at = datetime.now(timezone.utc)
             db.commit()
             # AI 参考分只影响展示，不改变「全链路完成」判定 → 静默重建快照即可
             auto_rebuild_summary(row.job_id, notify=False)
+        elif result.get("scorable") is False:
+            # 逐字稿没内容 / LLM 判不可评：不出分，标记内容不足。
+            # 清空 ai_score 是关键 —— 留着旧分会被「采纳 AI 分」直接写进人工评分。
+            row.ai_score = None
+            row.ai_dim_scores = []
+            row.ai_comment = result.get("comment") or result.get("reason") or ""
+            row.ai_scored_at = None
+            row.transcript_status = "insufficient"
+            db.commit()
+            logger.info(
+                "整场评分未出分（内容不足）minute=%s 原因=%s",
+                row.minutes_token,
+                result.get("reason") or "",
+            )
     except Exception:  # noqa: BLE001 - 评分失败不影响转写落库
         logger.exception("整场评分异常 minute=%s", row.minutes_token)
 
