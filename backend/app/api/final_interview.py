@@ -9,6 +9,7 @@
 两个端点均限定 ``admin`` 或 ``boss`` 角色；真正的访问控制由后端依赖保证，
 前端菜单/守卫只是体验层。
 """
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
@@ -19,6 +20,12 @@ from app.api.deps import get_db, ok, require_user
 from app.db.models.admin_user import ADMIN_ROLE, BOSS_ROLE
 from app.db.models.summary import RecruitmentSummary
 from app.exceptions import BizError
+from app.services.feishu_notify import (
+    FINAL_SCHEDULE_CLEAR,
+    FINAL_SCHEDULE_SET,
+    FINAL_SCHEDULE_UPDATE,
+    notify_final_scheduled,
+)
 from app.services.final_interview import (
     decide_final_interview,
     list_pending_final,
@@ -26,6 +33,8 @@ from app.services.final_interview import (
     serialize_for_boss,
 )
 from app.services.interview_brief import build_interview_brief
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["final-interview"])
 
@@ -72,6 +81,38 @@ def _parse_uuid(value: str, label: str) -> object:
         return uuid.UUID(value)
     except (ValueError, TypeError, AttributeError):
         raise BizError(422, f"{label}格式无效", http_status=422)
+
+
+def _notify_schedule_change(
+    row: RecruitmentSummary,
+    previous: datetime | None,
+    operator: str,
+) -> None:
+    """老板确认 / 改期 / 取消终面时间后推送 HR（尽力而为，失败只记日志）。
+
+    只在时间**真的发生变化**时推送：同一时间重复点保存不重复打扰 HR。
+    """
+    current = row.final_interview_scheduled_at
+    if current is None and previous is None:
+        return
+    if current is None:
+        action = FINAL_SCHEDULE_CLEAR
+    elif previous is None:
+        action = FINAL_SCHEDULE_SET
+    elif current != previous:
+        action = FINAL_SCHEDULE_UPDATE
+    else:
+        return
+
+    try:
+        result = notify_final_scheduled(
+            summary=row, action=action, operator=operator
+        )
+        logger.info(
+            "终面时间通知 summary=%s action=%s result=%s", row.id, action, result
+        )
+    except Exception:  # noqa: BLE001 - 通知失败不得影响老板的操作结果
+        logger.exception("终面时间通知异常，已忽略 summary_id=%s", row.id)
 
 
 @router.get("/recruitment-summaries/final-pending")
@@ -122,6 +163,7 @@ def schedule_final(
     if row is None:
         raise BizError(404, "汇总记录不存在", http_status=404)
 
+    previous_scheduled = row.final_interview_scheduled_at
     schedule_final_interview(
         db,
         row,
@@ -132,6 +174,9 @@ def schedule_final(
         row.final_interview_note = payload.note.strip()
     db.commit()
     db.refresh(row)
+
+    # 提交之后再推：通知失败不影响已落库的时间；HR 需要据此通知候选人
+    _notify_schedule_change(row, previous_scheduled, user.username)
     return ok(serialize_for_boss(row))
 
 

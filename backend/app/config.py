@@ -175,6 +175,9 @@ class Settings(BaseSettings):
     feishu_boss_open_ids: str = ""
     # 进入「待终试」时是否自动推送老板（独立开关，与 HR 汇总提醒互不影响）
     feishu_final_pending_notify_enabled: bool = True
+    # 老板确认 / 改期 / 取消终面时间后，是否推送 HR（独立开关）。
+    # HR 需要据此通知候选人并同步门店，因此默认开启；改期与取消同样会推。
+    feishu_final_scheduled_notify_enabled: bool = True
     # 候选人确认页展示的 HR 联系电话（候选人放弃线上确认时走线下兜底）
     hr_contact_phone: str = ""
 

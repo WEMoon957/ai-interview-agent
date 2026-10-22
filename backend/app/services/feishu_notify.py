@@ -1603,6 +1603,149 @@ def notify_final_pending(
     return result
 
 
+# ══════════════════ 终面时间已确认（发给 HR）══════════════════
+#
+# 第六类推送：老板在操作台确认 / 改期 / 取消终面时间后，推给 **HR**。
+# 终面时间是 HR 往下推进的必要输入（要通知候选人、同步门店），
+# 但系统不会替 HR 转达，所以必须主动推一条，避免 HR 反复去问老板。
+# 收件人沿用 HR 默认收件人（FEISHU_HR_OPEN_IDS / 部门 / 观察者）。
+
+FINAL_SCHEDULE_SET = "set"
+FINAL_SCHEDULE_UPDATE = "update"
+FINAL_SCHEDULE_CLEAR = "clear"
+
+_SCHEDULE_TITLES = {
+    FINAL_SCHEDULE_SET: ("终面时间已确认", "blue"),
+    FINAL_SCHEDULE_UPDATE: ("终面时间已改期", "orange"),
+    FINAL_SCHEDULE_CLEAR: ("终面时间已取消", "grey"),
+}
+
+
+def _fmt_local_time(value: Any, tz_offset: int = 8) -> str:
+    """把库里的 UTC 时间格式化成业务时区（默认北京时间）的可读字符串。
+
+    容忍 ``datetime`` / ISO8601 字符串 / 空值：解析不了时原样返回，
+    绝不因为时间格式异常把整条通知吞掉。
+    """
+    if not value:
+        return ""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ""
+        try:
+            value = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return text
+    if not isinstance(value, datetime):
+        return str(value)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    local = value.astimezone(timezone(timedelta(hours=int(tz_offset or 0))))
+    return local.strftime("%Y-%m-%d %H:%M")
+
+
+def build_final_scheduled_card(
+    *,
+    action: str = FINAL_SCHEDULE_SET,
+    candidate_name: str = "",
+    job_title: str = "",
+    scheduled_at: Any = None,
+    note: str = "",
+    final_score: Any = None,
+    screening_score: Any = None,
+    ai_interview_score: Any = None,
+    offline_score: Any = None,
+    operator: str = "",
+    tz_offset: int = 8,
+    base_url: str = "",
+) -> dict:
+    """构造「终面时间已确认 / 已改期 / 已取消」卡片（发给 HR）。"""
+    action = action if action in _SCHEDULE_TITLES else FINAL_SCHEDULE_SET
+    title, template = _SCHEDULE_TITLES[action]
+    name = candidate_name or "（未填写姓名）"
+    job = job_title or "—"
+    when = _fmt_local_time(scheduled_at, tz_offset)
+
+    blocks: list[str] = []
+    if action == FINAL_SCHEDULE_CLEAR:
+        blocks.append(f"**{name}**（{job}）的终面时间已取消，需重新与老板确认档期。")
+    else:
+        blocks.append(f"**{name}**（{job}）\n终面时间：**{when or '待安排'}**")
+        blocks.append(
+            f"最终 {_fmt_score(final_score)} 分 ／ "
+            f"初筛 {_fmt_score(screening_score)} ／ "
+            f"AI {_fmt_score(ai_interview_score)} ／ "
+            f"复试 {_fmt_score(offline_score)}"
+        )
+    if note:
+        blocks.append(f"备注：{note}")
+    if operator:
+        blocks.append(f"操作人：{operator}")
+    blocks.append("> 请据此通知候选人并同步门店；面试结束后由老板在操作台拍板。")
+
+    actions = []
+    if base_url:
+        actions.append(
+            {
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "打开数据汇总"},
+                "type": "primary",
+                "url": f"{base_url.rstrip('/')}/console/summary",
+            }
+        )
+    return build_card(title, template, blocks, actions=actions or None)
+
+
+def notify_final_scheduled(
+    *,
+    summary: Any,
+    action: str = FINAL_SCHEDULE_SET,
+    operator: str = "",
+    settings: Settings | None = None,
+    sender: CardSender | None = None,
+) -> dict:
+    """老板确认 / 改期 / 取消终面时间后推送 HR。绝不抛异常。
+
+    Args:
+        summary: ``RecruitmentSummary``（需含 candidate_name / job / 分数 /
+            final_interview_scheduled_at / final_interview_note）。
+        action: ``set`` / ``update`` / ``clear``，决定标题与文案。
+        operator: 操作人（老板账号用户名），留空时取记录上的确认人。
+
+    Returns:
+        ``{"status": "sent"|"skipped"|"failed", ...}``
+    """
+    settings = settings or get_settings()
+
+    if not settings.feishu_final_scheduled_notify_enabled:
+        return {"status": "skipped", "reason": "终面时间推送未启用"}
+    if not settings.feishu_notify_ready:
+        return {"status": "skipped", "reason": "飞书通知未就绪（开关/收件人/传输凭据）"}
+
+    job = getattr(summary, "job", None)
+    card = build_final_scheduled_card(
+        action=action,
+        candidate_name=getattr(summary, "candidate_name", "") or "",
+        job_title=getattr(job, "title", "") if job is not None else "",
+        scheduled_at=getattr(summary, "final_interview_scheduled_at", None),
+        note=getattr(summary, "final_interview_note", "") or "",
+        final_score=getattr(summary, "final_score", None),
+        screening_score=getattr(summary, "screening_score", None),
+        ai_interview_score=getattr(summary, "ai_interview_score", None),
+        offline_score=getattr(summary, "offline_score", None),
+        operator=operator or getattr(summary, "final_interview_decided_by", "") or "",
+        tz_offset=settings.offer_confirm_tz_offset,
+        base_url=settings.public_base_url_normalized,
+    )
+
+    # recipients 留空 = 走默认 HR 收件人（含部门实时解析与观察者）
+    sent, targets, err = send_card(card, settings=settings, sender=sender)
+    if not sent:
+        return {"status": "failed", "reason": err or "未知错误", "recipients": targets}
+    return {"status": "sent", "recipients": targets, "action": action}
+
+
 # ══════════════════════════ 面试创建通知 ══════════════════════════
 #
 # 第四类自动推送：HR 在后台「创建 / 发起 AI 面试」（手动单个创建、批量发起、

@@ -120,11 +120,13 @@ def test_serialize_scheduled_at_none():
 def _notify_settings(**kw):
     base = dict(
         feishu_final_pending_notify_enabled=True,
+        feishu_final_scheduled_notify_enabled=True,
         feishu_notify_ready=True,
         feishu_task_enabled=False,
         feishu_notify_max_items=20,
         public_base_url_normalized="http://example.com",
         boss_open_id_list=["ou_boss"],
+        offer_confirm_tz_offset=8,
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -202,3 +204,146 @@ def test_notify_creates_task_for_boss():
 
     assert res["task"]["status"] == "created"
     assert create.call_args.kwargs["assignees"] == ["ou_boss"]
+
+
+# ── 终面时间推 HR ───────────────────────────────────────────
+def _card_body(card):
+    return "\n".join(
+        el.get("text", {}).get("content", "")
+        for el in card["elements"]
+        if el.get("tag") == "div"
+    )
+
+
+def test_fmt_local_time_converts_utc_to_beijing():
+    assert fn._fmt_local_time("2026-10-25T06:00:00+00:00", 8) == "2026-10-25 14:00"
+    assert fn._fmt_local_time(None) == ""
+    assert fn._fmt_local_time("not-a-time") == "not-a-time"
+
+
+def test_build_final_scheduled_card_set():
+    card = fn.build_final_scheduled_card(
+        action=fn.FINAL_SCHEDULE_SET,
+        candidate_name="王芳",
+        job_title="店员",
+        scheduled_at=datetime(2026, 10, 25, 6, 0, tzinfo=timezone.utc),
+        note="门店二楼",
+        final_score=78.5,
+        screening_score=70,
+        ai_interview_score=72,
+        offline_score=80,
+        operator="boss",
+        base_url="http://example.com",
+    )
+    body = _card_body(card)
+    assert card["header"]["title"]["content"] == "终面时间已确认"
+    assert "王芳" in body and "店员" in body
+    assert "2026-10-25 14:00" in body  # UTC 06:00 → 北京时间 14:00
+    assert "门店二楼" in body and "boss" in body
+    assert "通知候选人" in body
+    assert card["elements"][-1]["tag"] == "action"  # 带跳转按钮
+
+
+def test_build_final_scheduled_card_update_and_clear():
+    updated = fn.build_final_scheduled_card(
+        action=fn.FINAL_SCHEDULE_UPDATE,
+        candidate_name="王芳",
+        scheduled_at=datetime(2026, 10, 26, 2, 0, tzinfo=timezone.utc),
+    )
+    assert updated["header"]["title"]["content"] == "终面时间已改期"
+    assert "2026-10-26 10:00" in _card_body(updated)
+
+    cleared = fn.build_final_scheduled_card(
+        action=fn.FINAL_SCHEDULE_CLEAR, candidate_name="王芳", job_title="店员"
+    )
+    assert cleared["header"]["title"]["content"] == "终面时间已取消"
+    assert "已取消" in _card_body(cleared)
+
+
+def test_notify_final_scheduled_sends_to_hr_by_default():
+    captured = {}
+
+    def fake_send(card, **kw):
+        captured["card"] = card
+        captured["recipients"] = kw.get("recipients")
+        return True, ["ou_hr"], ""
+
+    row = _summary(
+        final_interview_scheduled_at=datetime(2026, 10, 25, 6, 0, tzinfo=timezone.utc)
+    )
+    with patch.object(fn, "send_card", side_effect=fake_send):
+        res = fn.notify_final_scheduled(
+            summary=row,
+            action=fn.FINAL_SCHEDULE_SET,
+            operator="boss",
+            settings=_notify_settings(),
+        )
+
+    assert res["status"] == "sent"
+    assert captured["recipients"] is None  # 走默认 HR 收件人
+    assert "终面时间已确认" == captured["card"]["header"]["title"]["content"]
+
+
+def test_notify_final_scheduled_skipped_when_disabled():
+    res = fn.notify_final_scheduled(
+        summary=_summary(),
+        settings=_notify_settings(feishu_final_scheduled_notify_enabled=False),
+    )
+    assert res["status"] == "skipped"
+
+
+def test_notify_final_scheduled_failed_keeps_reason():
+    with patch.object(fn, "send_card", return_value=(False, ["ou_hr"], "boom")):
+        res = fn.notify_final_scheduled(
+            summary=_summary(), settings=_notify_settings()
+        )
+    assert res["status"] == "failed"
+    assert "boom" in res["reason"]
+
+
+# ── 路由层：只在时间真的变化时推送 ──────────────────────────
+@pytest.mark.parametrize(
+    ("previous", "current", "expected"),
+    [
+        (None, datetime(2026, 10, 25, 6, 0, tzinfo=timezone.utc), fn.FINAL_SCHEDULE_SET),
+        (
+            datetime(2026, 10, 25, 6, 0, tzinfo=timezone.utc),
+            datetime(2026, 10, 26, 2, 0, tzinfo=timezone.utc),
+            fn.FINAL_SCHEDULE_UPDATE,
+        ),
+        (datetime(2026, 10, 25, 6, 0, tzinfo=timezone.utc), None, fn.FINAL_SCHEDULE_CLEAR),
+    ],
+)
+def test_route_maps_schedule_change_to_action(previous, current, expected):
+    from app.api.final_interview import _notify_schedule_change
+
+    row = _summary(final_interview_scheduled_at=current)
+    with patch(
+        "app.api.final_interview.notify_final_scheduled",
+        return_value={"status": "sent"},
+    ) as notify:
+        _notify_schedule_change(row, previous, "boss")
+    assert notify.call_args.kwargs["action"] == expected
+
+
+def test_route_skips_push_when_time_unchanged():
+    from app.api.final_interview import _notify_schedule_change
+
+    when = datetime(2026, 10, 25, 6, 0, tzinfo=timezone.utc)
+    row = _summary(final_interview_scheduled_at=when)
+    with patch("app.api.final_interview.notify_final_scheduled") as notify:
+        _notify_schedule_change(row, when, "boss")
+    notify.assert_not_called()
+
+
+def test_route_swallows_notify_exception():
+    from app.api.final_interview import _notify_schedule_change
+
+    row = _summary(
+        final_interview_scheduled_at=datetime(2026, 10, 25, 6, 0, tzinfo=timezone.utc)
+    )
+    with patch(
+        "app.api.final_interview.notify_final_scheduled",
+        side_effect=RuntimeError("boom"),
+    ):
+        _notify_schedule_change(row, None, "boss")  # 不应抛出
