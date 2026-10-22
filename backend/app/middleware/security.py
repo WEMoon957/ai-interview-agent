@@ -147,13 +147,24 @@ class AdminWriteAuditMiddleware:
             logger.error("后台写操作未被鉴权保护：%s %s", method, path)
             return
 
+        # 区分「人点的」与「Agent 调用的」：两者的责任归属与事后追责完全不同
+        actor_type = state.get("actor_type") or "human"
+        detail = f"status={status}; actor={actor_type}"
+        if actor_type == "agent":
+            pat_name = state.get("pat_name") or ""
+            pat_prefix = state.get("pat_prefix") or ""
+            # 用 pat= 而不是 token=：审计的 scrub() 会把 token=xxx 整段打码，
+            # 那样就丢掉「是哪个令牌」的关键线索。这里只放名称与 12 位前缀，
+            # 前缀不足以冒用令牌，但足以定位到具体设备。
+            detail += f"; pat={pat_name}({pat_prefix})"
+
         entry = {
             "action": ACTION_ADMIN_WRITE,
             "request": Request(scope),
             "actor_id": getattr(user, "id", None),
             "actor_name": getattr(user, "username", "") or "",
             "target": f"{method} {path}"[:255],
-            "detail": f"status={status}",
+            "detail": detail,
         }
         try:
             # 同步 DB 写入放到线程池，避免阻塞事件循环

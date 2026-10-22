@@ -9,6 +9,7 @@ from app.db.models.feishu_minutes_auth import FeishuMinutesAuth
 from app.db.models.job import JobPosting
 from app.db.models.offline import OfflineInterview
 from app.db.models.offer import Offer
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.report import SessionReport
 from app.db.models.resume import Resume
 from app.db.models.screening import ResumeScreening
@@ -41,4 +42,6 @@ __all__ = [
     "AdminUser",
     "AdminSession",
     "AuditLog",
+    # 个人访问令牌（程序化客户端：桌面 Agent / CLI）
+    "PersonalAccessToken",
 ]

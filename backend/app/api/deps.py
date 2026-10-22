@@ -22,6 +22,7 @@ from app.db.models.admin_session import AdminSession
 from app.db.models.admin_user import AdminUser
 from app.db.session import SessionLocal
 from app.exceptions import BizError
+from app.services import pat as pat_service
 from app.services.auth import (
     CSRF_COOKIE_NAME,
     CSRF_HEADER_NAME,
@@ -31,6 +32,26 @@ from app.services.auth import (
 
 # 不需要 CSRF 校验的"安全方法"（只读语义）
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# ── 访问令牌（PAT）的收窄边界 ──────────────────────────────────
+# 令牌是给程序化客户端（桌面 Agent / CLI）用的，能力必须比人小：
+#
+#   1) 只能走白名单内的业务前缀——账号管理、改密、公司档案、模板等一律不可达；
+#   2) 不许 DELETE——Agent 只该"查、加、改"，删除是人的决定；
+#   3) 写方法还要求令牌带 write scope（见 _authenticate_token）。
+#
+# 这三道闸是叠加的：任何一条不满足都直接 403。
+_PAT_ALLOWED_PREFIXES = (
+    "/admin/jobs",
+    "/admin/screenings",
+    "/admin/candidates",
+    "/admin/offline-interviews",
+    "/admin/summary",
+)
+# 精确匹配的只读端点（不在上面的业务前缀里，但 Agent 需要它确认身份）
+_PAT_ALLOWED_EXACT = frozenset({("GET", "/auth/me")})
+
+_BEARER_PREFIX = "bearer "
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -71,11 +92,24 @@ def verify_csrf(request: Request, session: AdminSession) -> None:
 
 
 def require_user(request: Request, db: Session = Depends(get_db)) -> AdminUser:
-    """强制登录：解析会话 Cookie 返回当前用户，并对写操作做 CSRF 校验。
+    """强制登录：解析 ``Authorization: Bearer`` 或会话 Cookie，返回当前用户。
+
+    两条身份通道：
+
+    - **访问令牌（Bearer）**：程序化客户端用，不做 CSRF 校验（令牌不会被浏览器
+      自动携带，CSRF 威胁模型不成立），但受白名单、禁 DELETE、scope 三道约束。
+    - **会话 Cookie**：浏览器用，非安全方法强制 CSRF double-submit 校验。
+
+    失败时统一 401，不区分"未登录"与"令牌无效"，避免被用于探测令牌状态。
 
     Raises:
-        BizError: 401（未登录/会话失效/账号停用）、403（CSRF 校验失败）。
+        BizError: 401（未登录/会话失效/令牌无效/账号停用）、403（CSRF 校验失败、
+            令牌越界或权限不足）。
     """
+    raw_token = _bearer_token(request)
+    if raw_token is not None:
+        return _authenticate_token(request, db, raw_token)
+
     token = request.cookies.get(SESSION_COOKIE_NAME)
     session = resolve_session(db, token)
     if session is None:
@@ -91,6 +125,46 @@ def require_user(request: Request, db: Session = Depends(get_db)) -> AdminUser:
     # 供审计/业务代码取用，避免重复解析会话
     request.state.admin_session = session
     request.state.admin_user = user
+    request.state.actor_type = "human"
+    request.state.auth_via = "session"
+    return user
+
+
+def _bearer_token(request: Request) -> str | None:
+    """取出 Bearer 令牌原文；没有该请求头时返回 None。"""
+    header = request.headers.get("authorization") or ""
+    if not header.lower().startswith(_BEARER_PREFIX):
+        return None
+    return header[len(_BEARER_PREFIX):].strip() or None
+
+
+def _authenticate_token(request: Request, db: Session, raw_token: str) -> AdminUser:
+    """用访问令牌完成鉴权，并施加程序化客户端的能力边界。
+
+    这里存进 ``request.state`` 的只有标量（id/名称/前缀），不存 ORM 对象——
+    请求结束后数据库会话已关闭，审计中间件不该再去碰它。
+    """
+    resolved = pat_service.resolve_token(db, raw_token, request=request)
+    if resolved is None:
+        raise BizError(401, "访问令牌无效或已过期", http_status=401)
+
+    user, row = resolved
+    method = request.method
+    path = request.url.path
+
+    if method == "DELETE":
+        raise BizError(403, "访问令牌不允许执行删除操作", http_status=403)
+    if (method, path) not in _PAT_ALLOWED_EXACT and not path.startswith(_PAT_ALLOWED_PREFIXES):
+        raise BizError(403, "访问令牌无权访问该接口", http_status=403)
+    if method not in _SAFE_METHODS and not pat_service.has_scope(row, pat_service.SCOPE_WRITE):
+        raise BizError(403, "该访问令牌为只读权限，不能执行写操作", http_status=403)
+
+    request.state.admin_user = user
+    request.state.actor_type = "agent"
+    request.state.auth_via = "pat"
+    request.state.pat_id = str(row.id)
+    request.state.pat_name = row.name
+    request.state.pat_prefix = row.token_prefix
     return user
 
 

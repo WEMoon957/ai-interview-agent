@@ -25,6 +25,8 @@ ACTION_PASSWORD_CHANGED = "auth.password.changed"
 ACTION_USER_CREATED = "admin.user.created"
 ACTION_USER_DISABLED = "admin.user.disabled"
 ACTION_SESSION_REVOKED = "admin.session.revoked"
+ACTION_PAT_CREATED = "auth.pat.created"
+ACTION_PAT_REVOKED = "auth.pat.revoked"
 ACTION_ADMIN_WRITE = "admin.write"
 ACTION_CANDIDATE_RENAME = "candidate.rename"
 

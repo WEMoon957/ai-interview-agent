@@ -29,16 +29,20 @@ from app.api.schemas import (
     AdminUserOut,
     ChangePasswordRequest,
     CreateAdminUserRequest,
+    CreateTokenRequest,
     LoginRequest,
     ResetPasswordRequest,
+    TokenOut,
     UpdateAdminUserRequest,
 )
 from app.config import Settings, get_settings
 from app.db.models.admin_user import ADMIN_ROLE, VALID_ROLES, AdminUser
 from app.db.models.audit_log import ACTION_ADMIN_WRITE, ACTION_USER_DISABLED, ACTION_USER_CREATED
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.exceptions import BizError
 from app.services import audit
 from app.services import auth as auth_service
+from app.services import pat as pat_service
 from app.services.auth import CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 
 logger = logging.getLogger(__name__)
@@ -359,3 +363,90 @@ def unlock_user(
         detail="人工解除锁定",
     )
     return ok({"unlocked": True})
+
+
+# ── 个人访问令牌（PAT）──────────────────────────────────────
+# 定位：发给程序化客户端（桌面 Agent / CLI）的长期凭据，不是给人日常登录用的。
+# 浏览器会话 12 小时就过期，把账号密码塞进 MCP 配置文件更糟——PAT 是这两者之外
+# 唯一正确的选择：可撤销、可限权、可追溯到具体设备。
+def _token_out(row) -> dict:
+    """序列化令牌（绝不带 token_hash / 原文）。"""
+    return TokenOut(
+        id=str(row.id),
+        name=row.name,
+        token_prefix=row.token_prefix,
+        scopes=row.scopes,
+        expires_at=row.expires_at,
+        last_used_at=row.last_used_at,
+        last_used_ip=row.last_used_ip,
+        revoked_at=row.revoked_at,
+        created_at=row.created_at,
+        is_expired=pat_service.is_expired(row),
+    ).model_dump(mode="json")
+
+
+def _reject_agent_self_issue(request: Request) -> None:
+    """令牌不能用来签发新令牌：否则一个只读令牌能"自我提权"到可写。"""
+    if getattr(request.state, "auth_via", "") == "pat":
+        raise BizError(403, "访问令牌不能用于签发或管理令牌，请用后台或 CLI 操作", http_status=403)
+
+
+@router.post("/tokens")
+def create_access_token(
+    payload: CreateTokenRequest,
+    request: Request,
+    user: AdminUser = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """为当前登录用户签发访问令牌。
+
+    **令牌原文只在此响应中出现一次**，系统只保存 sha256 摘要，之后无法找回。
+    """
+    _reject_agent_self_issue(request)
+    row, raw = pat_service.create_token(
+        db,
+        user,
+        name=payload.name,
+        scopes=payload.scopes,
+        expires_days=payload.expires_days,
+        created_by=user.username,
+        request=request,
+    )
+    data = _token_out(row)
+    data["token"] = raw
+    data["notice"] = "令牌原文只显示这一次，请立即复制保存；丢失只能重新签发"
+    return ok(data)
+
+
+@router.get("/tokens")
+def list_access_tokens(
+    request: Request,
+    user: AdminUser = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """列出本人的全部令牌（含已撤销，便于排查；不含原文）。"""
+    _reject_agent_self_issue(request)
+    return ok([_token_out(row) for row in pat_service.list_tokens(db, user.id)])
+
+
+@router.delete("/tokens/{token_id}")
+def revoke_access_token(
+    token_id: str,
+    request: Request,
+    user: AdminUser = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """撤销本人的一个令牌（幂等）。只能撤销自己的，避免互相踢下线。"""
+    _reject_agent_self_issue(request)
+    try:
+        tid = uuid.UUID(token_id)
+    except (ValueError, TypeError, AttributeError):
+        raise BizError(422, "令牌 id 格式无效", http_status=422) from None
+
+    row = db.get(PersonalAccessToken, tid)
+    # 不区分"不存在"与"不属于你"，避免被用于探测他人令牌 id
+    if row is None or row.user_id != user.id:
+        raise BizError(404, "令牌不存在", http_status=404)
+
+    pat_service.revoke_token(db, row, actor=user, request=request)
+    return ok({"revoked": True, "id": str(row.id)})

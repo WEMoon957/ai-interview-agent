@@ -400,3 +400,34 @@ class ResetPasswordRequest(BaseModel):
     """管理员重置他人密码请求体。"""
 
     new_password: str = Field(min_length=1, max_length=128, description="新密码")
+
+
+class CreateTokenRequest(BaseModel):
+    """签发个人访问令牌请求体。
+
+    令牌用于程序化客户端（桌面 Agent / CLI），**不是**给人日常登录用的。
+    """
+
+    name: str = Field(default="", max_length=64, description="设备/用途标识，如「MacBook-招聘助手」")
+    scopes: list[str] = Field(
+        default_factory=lambda: ["read"],
+        description="权限范围：read（只读）/ write（可写，隐含 read）",
+    )
+    expires_days: int = Field(
+        default=90, ge=0, le=365, description="有效天数，0 表示长期有效（上限 365）"
+    )
+
+
+class TokenOut(BaseModel):
+    """令牌信息（**绝不包含令牌原文**）。"""
+
+    id: str
+    name: str
+    token_prefix: str
+    scopes: str
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
+    last_used_ip: str = ""
+    revoked_at: datetime | None = None
+    created_at: datetime | None = None
+    is_expired: bool = False
