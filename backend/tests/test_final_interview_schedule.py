@@ -121,6 +121,7 @@ def _notify_settings(**kw):
     base = dict(
         feishu_final_pending_notify_enabled=True,
         feishu_final_scheduled_notify_enabled=True,
+        feishu_final_passed_notify_enabled=True,
         feishu_notify_ready=True,
         feishu_task_enabled=False,
         feishu_notify_max_items=20,
@@ -347,3 +348,129 @@ def test_route_swallows_notify_exception():
         side_effect=RuntimeError("boom"),
     ):
         _notify_schedule_change(row, None, "boss")  # 不应抛出
+
+
+# ── 终试通过推 HR（含全局抄送）────────────────────────────────
+def test_notify_final_passed_sends_to_hr_by_default():
+    captured = {}
+
+    def fake_send(card, **kw):
+        captured["card"] = card
+        captured["recipients"] = kw.get("recipients")
+        return True, ["ou_hr", "ou_observer"], ""
+
+    row = _summary(
+        final_interview_status=FINAL_PASSED,
+        final_interview_scheduled_at=datetime(2026, 10, 25, 6, 0, tzinfo=timezone.utc),
+    )
+    with patch.object(fn, "send_card", side_effect=fake_send):
+        res = fn.notify_final_passed(
+            summary=row, operator="boss", settings=_notify_settings()
+        )
+
+    assert res["status"] == "sent"
+    # recipients 留空才会并入 FEISHU_OBSERVER_OPEN_IDS，定向发送会绕过全局抄送
+    assert captured["recipients"] is None
+    assert captured["card"]["header"]["title"]["content"] == fn.FINAL_PASSED_TITLE
+
+
+def test_final_passed_card_carries_candidate_and_next_step():
+    card = fn.build_final_passed_card(
+        candidate_name="王芳",
+        job_title="店员",
+        final_score=78.5,
+        offline_score=80.0,
+        operator="boss",
+        base_url="http://example.com",
+    )
+    text = str(card)
+    assert "王芳" in text and "店员" in text
+    assert "78.5" in text
+    assert "/console/summary" in text  # 一键去创建 Offer
+
+
+def test_notify_final_passed_skipped_when_disabled():
+    res = fn.notify_final_passed(
+        summary=_summary(),
+        settings=_notify_settings(feishu_final_passed_notify_enabled=False),
+    )
+    assert res["status"] == "skipped"
+
+
+def test_notify_final_passed_failed_keeps_reason():
+    with patch.object(fn, "send_card", return_value=(False, ["ou_hr"], "boom")):
+        res = fn.notify_final_passed(summary=_summary(), settings=_notify_settings())
+    assert res["status"] == "failed"
+    assert "boom" in res["reason"]
+
+
+class _FakeDB:
+    """路由层测试用的最小 Session 替身（只用到 get / commit / refresh）。"""
+
+    def __init__(self, row):
+        self.row = row
+        self.committed = False
+
+    def get(self, _model, _pk):
+        return self.row
+
+    def commit(self):
+        self.committed = True
+
+    def refresh(self, _obj):
+        return None
+
+
+def test_route_final_decision_pass_notifies_hr():
+    from app.api.final_interview import decide_final
+
+    row = _summary()
+    db = _FakeDB(row)
+    sent = {}
+
+    def fake_notify(**kw):
+        sent.update(kw)
+        return {"status": "sent"}
+
+    with patch("app.api.final_interview.notify_final_passed", side_effect=fake_notify):
+        decide_final(
+            "00000000-0000-0000-0000-000000000001",
+            SimpleNamespace(decision="pass", note="", scheduled_at=None),
+            user=SimpleNamespace(username="boss"),
+            db=db,
+        )
+
+    assert db.committed is True
+    assert sent["operator"] == "boss"
+    assert sent["summary"] is row
+
+
+def test_route_final_decision_fail_does_not_notify():
+    from app.api.final_interview import decide_final
+
+    row = _summary()
+    with patch("app.api.final_interview.notify_final_passed") as notify:
+        decide_final(
+            "00000000-0000-0000-0000-000000000001",
+            SimpleNamespace(decision="fail", note="不合适", scheduled_at=None),
+            user=SimpleNamespace(username="boss"),
+            db=_FakeDB(row),
+        )
+    notify.assert_not_called()
+
+
+def test_route_final_decision_swallows_notify_exception():
+    from app.api.final_interview import decide_final
+
+    row = _summary()
+    with patch(
+        "app.api.final_interview.notify_final_passed",
+        side_effect=RuntimeError("boom"),
+    ):
+        decide_final(
+            "00000000-0000-0000-0000-000000000001",
+            SimpleNamespace(decision="pass", note="", scheduled_at=None),
+            user=SimpleNamespace(username="boss"),
+            db=_FakeDB(row),
+        )
+    assert row.final_interview_status == FINAL_PASSED  # 决策已落库，通知异常不外抛

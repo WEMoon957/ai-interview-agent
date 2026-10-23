@@ -24,9 +24,11 @@ from app.services.feishu_notify import (
     FINAL_SCHEDULE_CLEAR,
     FINAL_SCHEDULE_SET,
     FINAL_SCHEDULE_UPDATE,
+    notify_final_passed,
     notify_final_scheduled,
 )
 from app.services.final_interview import (
+    FINAL_PASSED,
     decide_final_interview,
     list_pending_final,
     schedule_final_interview,
@@ -204,4 +206,17 @@ def decide_final(
     )
     db.commit()
     db.refresh(row)
+
+    # 通过后主动告知 HR：终试通过是发起 Offer 的唯一前置条件，
+    # 不推就只能靠 HR 自己去刷「数据汇总」页，录用流程会卡在老板拍板之后。
+    # 不通过不推（结论对 HR 没有动作），失败只记日志、不影响已落库的决策。
+    if row.final_interview_status == FINAL_PASSED:
+        try:
+            notify = notify_final_passed(summary=row, operator=user.username)
+            logger.info(
+                "终试通过通知HR summary=%s result=%s", row.id, notify
+            )
+        except Exception:  # noqa: BLE001 - 通知失败不得影响老板的操作结果
+            logger.exception("终试通过通知HR异常，已忽略 summary_id=%s", row.id)
+
     return ok(serialize_for_boss(row))

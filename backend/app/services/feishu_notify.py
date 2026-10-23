@@ -1746,6 +1746,116 @@ def notify_final_scheduled(
     return {"status": "sent", "recipients": targets, "action": action}
 
 
+# ══════════════════ 终试通过（发给 HR）══════════════════
+#
+# 第七类推送：老板在操作台点「通过」后，推给 **HR**。
+# 终试通过是 HR 发起 Offer 的唯一前置条件（``services/offer.create_offer``
+# 只放行 passed_final）。在此之前系统没有任何主动告知，HR 只能自己去刷
+# 「数据汇总」页才发现有人通过了终试，于是录用流程被卡在老板拍板之后。
+#
+# 收件人沿用 HR 默认收件人（FEISHU_HR_OPEN_IDS / 部门 / 观察者），
+# 因此配了 FEISHU_OBSERVER_OPEN_IDS 的全局抄送人也会收到同一张卡片。
+# 不通过（fail）**不推**：结论对 HR 没有动作，推了只是刷屏。
+
+FINAL_PASSED_TITLE = "终试通过 · 待发 Offer"
+
+
+def build_final_passed_card(
+    *,
+    candidate_name: str = "",
+    job_title: str = "",
+    scheduled_at: Any = None,
+    note: str = "",
+    final_score: Any = None,
+    screening_score: Any = None,
+    ai_interview_score: Any = None,
+    offline_score: Any = None,
+    operator: str = "",
+    tz_offset: int = 8,
+    base_url: str = "",
+) -> dict:
+    """构造「终试通过 · 待发 Offer」卡片（发给 HR）。"""
+    name = candidate_name or "（未填写姓名）"
+    job = job_title or "—"
+    when = _fmt_local_time(scheduled_at, tz_offset)
+
+    blocks: list[str] = [
+        f"**{name}**（{job}）已通过老板终试，可以发起录用流程了。",
+        f"最终 {_fmt_score(final_score)} 分 ／ "
+        f"初筛 {_fmt_score(screening_score)} ／ "
+        f"AI {_fmt_score(ai_interview_score)} ／ "
+        f"复试 {_fmt_score(offline_score)}",
+    ]
+    if when:
+        blocks.append(f"终面时间：{when}")
+    if note:
+        blocks.append(f"老板备注：{note}")
+    if operator:
+        blocks.append(f"操作人：{operator}")
+    blocks.append(
+        "> 请在「数据汇总」页为该候选人创建 Offer；"
+        "审批通过后系统会自动给候选人发送录用通知邮件。"
+    )
+
+    actions = []
+    if base_url:
+        actions.append(
+            {
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "去创建 Offer"},
+                "type": "primary",
+                "url": f"{base_url.rstrip('/')}/console/summary",
+            }
+        )
+    return build_card(FINAL_PASSED_TITLE, "green", blocks, actions=actions or None)
+
+
+def notify_final_passed(
+    *,
+    summary: Any,
+    operator: str = "",
+    settings: Settings | None = None,
+    sender: CardSender | None = None,
+) -> dict:
+    """老板拍板「通过」后推送 HR。绝不抛异常。
+
+    Args:
+        summary: ``RecruitmentSummary``（需含 candidate_name / job / 分数 /
+            final_interview_scheduled_at / final_interview_note）。
+        operator: 操作人（老板账号用户名），留空时取记录上的决策人。
+
+    Returns:
+        ``{"status": "sent"|"skipped"|"failed", ...}``
+    """
+    settings = settings or get_settings()
+
+    if not settings.feishu_final_passed_notify_enabled:
+        return {"status": "skipped", "reason": "终试通过推送未启用"}
+    if not settings.feishu_notify_ready:
+        return {"status": "skipped", "reason": "飞书通知未就绪（开关/收件人/传输凭据）"}
+
+    job = getattr(summary, "job", None)
+    card = build_final_passed_card(
+        candidate_name=getattr(summary, "candidate_name", "") or "",
+        job_title=getattr(job, "title", "") if job is not None else "",
+        scheduled_at=getattr(summary, "final_interview_scheduled_at", None),
+        note=getattr(summary, "final_interview_note", "") or "",
+        final_score=getattr(summary, "final_score", None),
+        screening_score=getattr(summary, "screening_score", None),
+        ai_interview_score=getattr(summary, "ai_interview_score", None),
+        offline_score=getattr(summary, "offline_score", None),
+        operator=operator or getattr(summary, "final_interview_decided_by", "") or "",
+        tz_offset=settings.offer_confirm_tz_offset,
+        base_url=settings.public_base_url_normalized,
+    )
+
+    # recipients 留空 = 走默认 HR 收件人（含部门实时解析与全局抄送人）
+    sent, targets, err = send_card(card, settings=settings, sender=sender)
+    if not sent:
+        return {"status": "failed", "reason": err or "未知错误", "recipients": targets}
+    return {"status": "sent", "recipients": targets, "action": FINAL_PASSED_TITLE}
+
+
 # ══════════════════════════ 面试创建通知 ══════════════════════════
 #
 # 第四类自动推送：HR 在后台「创建 / 发起 AI 面试」（手动单个创建、批量发起、

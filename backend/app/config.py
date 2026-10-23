@@ -178,6 +178,10 @@ class Settings(BaseSettings):
     # 老板确认 / 改期 / 取消终面时间后，是否推送 HR（独立开关）。
     # HR 需要据此通知候选人并同步门店，因此默认开启；改期与取消同样会推。
     feishu_final_scheduled_notify_enabled: bool = True
+    # 老板在操作台点「通过」后，是否推送 HR（独立开关）。
+    # 终试通过是 HR 发起 Offer 的唯一前置条件，通过后不主动告知，
+    # HR 只能靠自己去刷操作台，因此默认开启。不通过不推，避免刷屏。
+    feishu_final_passed_notify_enabled: bool = True
     # 候选人确认页展示的 HR 联系电话（候选人放弃线上确认时走线下兜底）
     hr_contact_phone: str = ""
 

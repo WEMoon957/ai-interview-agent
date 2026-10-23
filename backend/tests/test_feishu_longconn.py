@@ -105,7 +105,8 @@ def wire(monkeypatch):
         db = _FakeDB(offer)
         installed["db"] = db
         monkeypatch.setattr(lc, "_dbsession_factory", lambda: db)
-        monkeypatch.setattr(lc, "_notify_hr_after_approve", lambda *a, **k: None)
+        # 后台通知线程在用例里不真正跑网络；需要验证线程行为时单独测
+        monkeypatch.setattr(lc, "_notify_hr_after_approve_async", lambda *a, **k: None)
         return db
 
     return _install
@@ -259,6 +260,77 @@ def test_status_conflict_warns(wire):
 
     assert resp["toast"]["type"] == "warning"
     assert "已被处理" in resp["toast"]["content"]
+    # 旧卡片要自愈：重复点击时不仅提示，还要把卡片刷成真实状态
+    assert resp["card"]["data"]["header"]["title"]["content"] == "✅ Offer 已通过"
+
+
+def test_status_conflict_on_rejected_shows_grey_card(wire):
+    offer = _offer(status="rejected")
+    wire(offer)
+
+    resp = _resp(
+        lc._handle_card_action(
+            _card_data(value={"offer_id": str(offer.id), "action": "approve"})
+        )
+    )
+
+    card = resp["card"]["data"]
+    assert card["header"]["template"] == "grey"
+    assert "rejected" in json.dumps(card)
+
+
+def test_approve_dispatches_notification_to_background(monkeypatch):
+    """审批必须在 3 秒内应答，通知与邮件不能同步做。"""
+    offer = _offer()
+    monkeypatch.setattr(lc, "_dbsession_factory", lambda: _FakeDB(offer))
+    called = {}
+
+    def fake_async(offer_id, operator_open_id):
+        called["offer_id"] = offer_id
+        called["operator"] = operator_open_id
+
+    monkeypatch.setattr(lc, "_notify_hr_after_approve_async", fake_async)
+
+    resp = _resp(
+        lc._handle_card_action(
+            _card_data(value={"offer_id": str(offer.id), "action": "approve"})
+        )
+    )
+
+    assert called["offer_id"] == offer.id
+    assert called["operator"] == "ou_boss"
+    assert resp["toast"]["type"] == "success"
+
+
+def test_notify_async_runs_in_thread_with_own_session(monkeypatch):
+    """后台线程要自己开会话、重新取 Offer，并在结束时关闭。"""
+    import threading
+
+    offer = _offer()
+    db = _FakeDB(offer)
+    monkeypatch.setattr(lc, "_dbsession_factory", lambda: db)
+    done = threading.Event()
+    seen = {}
+
+    def fake_notify(obj, operator, session=None):
+        seen["id"] = obj.id
+        seen["operator"] = operator
+        seen["session"] = session
+        done.set()
+
+    monkeypatch.setattr(lc, "_notify_hr_after_approve", fake_notify)
+
+    lc._notify_hr_after_approve_async(offer.id, "ou_boss")
+    assert done.wait(2.0) is True
+    assert seen["id"] == offer.id
+    assert seen["operator"] == "ou_boss"
+    assert seen["session"] is db
+    # close 在 finally 里、done.set() 之后执行，给线程一点收尾时间
+    for _ in range(40):
+        if db.closed:
+            break
+        threading.Event().wait(0.05)
+    assert db.closed is True
 
 
 def test_unknown_action_warns(wire):
@@ -288,3 +360,17 @@ def test_handler_never_raises_on_broken_payload():
     # 完全畸形的 data 也必须返回响应而不是抛异常（否则长连接会被断开）
     resp = _resp(lc._handle_card_action(SimpleNamespace(event=None)))
     assert resp["toast"]["type"] in {"warning", "error"}
+
+
+def test_timed_card_action_passes_through(monkeypatch):
+    """计时包装不得改变回调行为（返回值原样透传）。"""
+    offer = _offer()
+    monkeypatch.setattr(lc, "_dbsession_factory", lambda: _FakeDB(offer))
+    monkeypatch.setattr(lc, "_notify_hr_after_approve_async", lambda *a, **k: None)
+
+    resp = _resp(
+        lc._timed_card_action(
+            _card_data(value={"offer_id": str(offer.id), "action": "approve"})
+        )
+    )
+    assert resp["card"]["data"]["header"]["title"]["content"] == "✅ Offer 已通过"

@@ -187,7 +187,22 @@ def _handle_card_action(data: Any) -> Any:
                 if offer is None:
                     return _toast("error", "未找到该 Offer，可能已被删除")
                 if offer.status != "pending_approval":
-                    return _toast("warning", f"该 Offer 已被处理（当前状态：{offer.status}）")
+                    # 卡片没跟着变（回调超时/响应丢失）时，审批人会再点一次：
+                    # 这里除了提示，还要把卡片换成当前真实状态，让旧卡片自愈。
+                    done = offer.status == "sent"
+                    return _respond(
+                        toast=("warning", f"该 Offer 已被处理（当前状态：{offer.status}）"),
+                        card=_result_card(
+                            title="✅ Offer 已通过" if done else "⛔ Offer 已处理",
+                            template="green" if done else "grey",
+                            lines=[
+                                f"**{offer.candidate_name}** · {offer.job_title}",
+                                "",
+                                f"当前状态：{offer.status}",
+                                "无需重复操作，如需修改请到后台处理。",
+                            ],
+                        ),
+                    )
 
                 if offer.approver_open_id and operator_open_id:
                     allowed = {x.strip() for x in offer.approver_open_id.split(",") if x.strip()}
@@ -198,7 +213,9 @@ def _handle_card_action(data: Any) -> Any:
                     offer_svc.approve_offer(db, offer, note=note, settings=get_settings())
                     db.commit()
                     db.refresh(offer)
-                    _notify_hr_after_approve(offer, operator_open_id, db)
+                    # 通知 HR + 给候选人发邮件都很慢（发卡 10s / SMTP 15s 超时），
+                    # 必须挪到后台：卡片回调超过 3 秒就会被飞书丢弃，卡片不更新。
+                    _notify_hr_after_approve_async(offer.id, operator_open_id)
                     # 就地替换卡片为「已通过」，否则审批人会以为没生效而重复点击
                     return _respond(
                         toast=("success", "已通过，Offer 链接将推送给 HR"),
@@ -240,6 +257,23 @@ def _handle_card_action(data: Any) -> Any:
         return _toast("error", "处理失败，请在后台重试")
 
 
+def _timed_card_action(data: Any) -> Any:
+    """给回调计时后再转交主逻辑。
+
+    飞书要求 3 秒内应答，超时的响应会被直接丢弃（卡片不更新、toast 也不弹），
+    而本地日志里看不出区别。这里把真实耗时打出来：超过 1 秒就该警惕。
+    """
+    import time
+
+    start = time.monotonic()
+    try:
+        return _handle_card_action(data)
+    finally:
+        elapsed_ms = (time.monotonic() - start) * 1000
+        log = logger.warning if elapsed_ms >= 1000 else logger.info
+        log("卡片回调处理耗时 %.0f ms（超过 3000ms 会被飞书丢弃）", elapsed_ms)
+
+
 def _candidate_link(offer) -> str:
     """候选人确认链接（与 API 层构造方式保持一致）。"""
     settings = get_settings()
@@ -275,6 +309,38 @@ def _notify_hr_after_approve(offer, operator_open_id: str, db=None) -> None:
             )
     except Exception:  # noqa: BLE001 - 通知失败不影响审批结果
         logger.exception("审批通过后推送 HR 通知失败 offer_id=%s", getattr(offer, "id", ""))
+
+
+def _notify_hr_after_approve_async(offer_id: Any, operator_open_id: str) -> None:
+    """把审批后的通知 + 候选人邮件丢到后台线程，**回调立刻返回**。
+
+    飞书要求卡片回调 3 秒内应答，超时后客户端直接丢弃响应 —— 卡片不会变，
+    但审批早已落库，审批人就会以为没生效而重复点击。
+    ``_notify_hr_after_approve`` 里是一次飞书发卡（单收件人超时 10s）加一次
+    SMTP 投递（超时 15s），同步做完基本必然超时，因此这里必须异步。
+
+    线程内**重新开一个会话并重取 Offer**：调用方的会话在回调返回后就会关闭，
+    不能跨线程复用 ORM 对象。
+    """
+    def _run() -> None:
+        db = None
+        try:
+            db = _open_db()
+            offer = _load_offer_or_none(db, str(offer_id))
+            if offer is None:
+                logger.warning("审批后通知跳过：Offer 已不存在 offer_id=%s", offer_id)
+                return
+            _notify_hr_after_approve(offer, operator_open_id, db)
+        except Exception:  # noqa: BLE001 - 后台线程异常只记日志
+            logger.exception("审批后通知（后台）失败 offer_id=%s", offer_id)
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    threading.Thread(target=_run, daemon=True, name="offer-approve-notify").start()
 
 
 def start_long_connection(settings: Settings | None = None) -> bool:
@@ -325,7 +391,7 @@ def start_long_connection(settings: Settings | None = None) -> bool:
             try:
                 event_handler = (
                     lark.EventDispatcherHandler.builder("", "")
-                    .register_p2_card_action_trigger(_handle_card_action)
+                    .register_p2_card_action_trigger(_timed_card_action)
                     .build()
                 )
                 client = lark.ws.Client(
