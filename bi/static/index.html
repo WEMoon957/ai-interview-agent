@@ -1899,7 +1899,8 @@
         <td class="num">${stage(a.key, 'offline')}</td>
         <td class="num">${base ? val(base.dims, a.key) : '<span class="na">—</span>'}</td>
       </tr>`).join('')}</tbody>
-    </table>`
+    </table>
+    <div class="dim-note">匹配度 = 简历初筛 × 0.2 + AI 面试 × 0.4 + 线下复试 × 0.4（缺环节按比例归一化）；同一环节里归到同一维度的多个原始维度（如「技能匹配」「经验相关」→ 岗位匹配）先按模板权重合成一个环节值，再参与加权。</div>`
   }
 
   // 雷达配色：页面用深色（dark），导出用浅色（light，便于打印 / 贴进 Word）
@@ -2066,6 +2067,7 @@
       return v == null ? '—' : Number(v).toFixed(1)
     }
     const tips = []
+    tips.push('匹配度 = 简历初筛×0.2 + AI 面试×0.4 + 线下复试×0.4（缺环节按比例归一化）；同一环节的多个原始维度先按模板权重合成一个环节值。')
     if (base && base.sample < 3) tips.push(`同岗位样本仅 ${base.sample} 人，均值基准仅供参考。`)
     const missing = state.dimAxes.filter((a) => !r.dims || r.dims[a.key] == null).map((a) => a.name)
     if (missing.length) tips.push(`未考察维度：${missing.join('、')}（对应环节未评到该维度，非 0 分）。`)

@@ -115,3 +115,127 @@ def test_repeated_build_is_idempotent():
     _, first = bi._build_dim_config(_cfg(), [("dim_4", "卫生")])
     _, second = bi._build_dim_config(_cfg(), [("dim_4", "卫生"), ("dim_9", "卫生")])
     assert [a["key"] for a in first] == [a["key"] for a in second]
+
+
+# ── 匹配度口径 ────────────────────────────────────────────────
+#
+# 回归背景：简历初筛的「技能匹配」和「经验相关」都归并到「岗位匹配」，旧实现按
+# **原始维度条数**累加 stage_weight，把 0.20 放大成 0.40，匹配度被抬高；同时
+# evidence 只留最后一个原始维度，弹层「简历初筛」列与「匹配度」列对不上账。
+
+
+def test_stage_weight_not_multiplied_by_dim_count():
+    """同一环节挂多个同轴维度时，环节权重只能算一次（0.2，不是 0.2×2）。"""
+    cfg = _cfg()
+    norm = bi._normalize_dims(
+        {
+            "screening": [
+                {"key": "skill_match", "name": "技能匹配", "score": 7.5, "max_score": 10, "weight": 0.3},
+                {"key": "experience", "name": "经验相关", "score": 6.5, "max_score": 10, "weight": 0.3},
+            ],
+            "ai": [
+                {"key": "job_fit", "name": "岗位匹配", "score": 5.97, "max_score": None, "weight": 0.15},
+            ],
+        },
+        cfg,
+    )
+
+    # 环节内先合成：(75×0.3 + 65×0.3)/0.6 = 70.0
+    assert norm["evidence"]["job_match"]["screening"] == 70.0
+    assert norm["evidence"]["job_match"]["ai"] == 59.7
+    # 跨环节：(70×0.2 + 59.7×0.4)/0.6 = 63.1；旧实现会算成 64.8
+    assert norm["dims"]["job_match"] == 63.1
+
+
+def test_match_score_reconciles_with_stage_evidence():
+    """弹层里「匹配度」必须等于各环节列按 stage_weight 的加权均值。"""
+    cfg = _cfg()
+    norm = bi._normalize_dims(
+        {
+            "screening": [
+                {"key": "skill_match", "name": "技能匹配", "score": 6.5, "max_score": 10},
+                {"key": "experience", "name": "经验相关", "score": 5.5, "max_score": 10},
+                {"key": "stability", "name": "稳定性", "score": 6.0, "max_score": 10},
+            ],
+            "ai": [
+                {"key": "job_fit", "name": "岗位匹配", "score": 5.9, "max_score": 10},
+                {"key": "stability", "name": "稳定性", "score": 5.6, "max_score": 10},
+            ],
+        },
+        cfg,
+    )
+
+    w = cfg["stage_weight"]
+    for key, ev in norm["evidence"].items():
+        if not ev:
+            assert norm["dims"][key] is None
+            continue
+        total_w = sum(w[s] for s in ev)
+        expected = sum(v * w[s] for s, v in ev.items()) / total_w
+        assert abs(norm["dims"][key] - round(expected, 1)) <= 0.15
+
+
+def test_uncovered_dim_is_not_scored_as_zero():
+    """covered=False 是「没考察到」，不能当 0 分把匹配度压低。"""
+    cfg = _cfg()
+    norm = bi._normalize_dims(
+        {
+            "ai": [
+                {"key": "job_fit", "name": "岗位匹配", "score": 0, "max_score": 10,
+                 "weight": 0.2, "covered": False},
+                {"key": "communication", "name": "沟通表达", "score": 6.0, "max_score": 10,
+                 "weight": 0.2, "covered": True},
+            ],
+        },
+        cfg,
+    )
+
+    assert norm["dims"]["job_match"] is None
+    assert norm["evidence"]["job_match"] == {}
+    assert norm["dims"]["communication"] == 60.0
+
+
+def test_covered_zero_still_counts():
+    """真正被考察到却给了 0 分，仍然要算 0，而不是当成缺失。"""
+    cfg = _cfg()
+    norm = bi._normalize_dims(
+        {"ai": [{"key": "job_fit", "name": "岗位匹配", "score": 0, "max_score": 10,
+                 "weight": 0.2, "covered": True}]},
+        cfg,
+    )
+
+    assert norm["dims"]["job_match"] == 0.0
+
+
+def test_within_stage_uses_raw_weight():
+    """环节内多维度合并按原始权重加权，而不是等权平均。"""
+    cfg = _cfg()
+    norm = bi._normalize_dims(
+        {
+            "ai": [
+                {"key": "job_fit", "name": "岗位匹配", "score": 8.0, "max_score": 10, "weight": 0.3},
+                {"key": "tech_depth", "name": "技术深度", "score": 4.0, "max_score": 10, "weight": 0.1},
+            ],
+        },
+        cfg,
+    )
+
+    # (80×0.3 + 40×0.1)/0.4 = 70；等权平均会得到 60
+    assert norm["dims"]["job_match"] == 70.0
+
+
+def test_missing_raw_weight_falls_back_to_equal_average():
+    """原始维度没带权重时退回等权平均，不能凭条数放大。"""
+    cfg = _cfg()
+    norm = bi._normalize_dims(
+        {
+            "ai": [
+                {"key": "job_fit", "name": "岗位匹配", "score": 8.0, "max_score": 10},
+                {"key": "tech_depth", "name": "技术深度", "score": 4.0, "max_score": 10},
+            ],
+        },
+        cfg,
+    )
+
+    assert norm["dims"]["job_match"] == 60.0
+

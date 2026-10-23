@@ -1766,6 +1766,18 @@ def _build_dim_config(
 def _normalize_dims(stage_dims: dict, cfg: dict) -> dict:
     """把各环节原始维度分归并、加权成统一维度匹配度（纯函数，便于单测）。
 
+    口径（PRD 3.2）：**每个环节对每根轴只贡献一个值**。
+
+    - 环节内：归并到同一根轴的多个原始维度（如简历初筛的「技能匹配」+「经验相关」
+      都归「岗位匹配」），先按原始 ``weight`` 加权合成一个环节值；权重全缺失或
+      全为 0 时退回等权平均。**不能**把 ``stage_weight`` 按原始维度个数累加，
+      否则同一环节挂的维度越多、该环节权重越大（0.2 被放大成 0.4/0.6）。
+    - 跨环节：再按 ``stage_weight``（0.20 / 0.40 / 0.40）加权，某环节没有该维度
+      评分时按比例重新归一化。
+    - ``covered=False`` 表示「本场没考察到」而不是「得 0 分」，直接不计入——与
+      ``backend/app/services/scoring.py::aggregate_report`` 的汇总口径保持一致，
+      否则未考察维度会把匹配度凭空压低。
+
     Args:
         stage_dims: ``{"screening": [...], "ai": [...], "offline": [...]}``，
             每项是该环节最新一条记录的 ``dim_scores`` 列表。
@@ -1773,8 +1785,9 @@ def _normalize_dims(stage_dims: dict, cfg: dict) -> dict:
 
     Returns:
         ``{"dims": {canon: 0~100|None}, "evidence": {canon: {stage: 0~100}}, "other": [...]}``
-        - ``dims``：跨环节加权匹配度（仅统计该维度有分的环节，全缺失记 None）；
-        - ``evidence``：各环节对该维度的贡献（便于弹层下钻）；
+        - ``dims``：跨环节加权匹配度，恒等于 ``evidence`` 按 ``stage_weight`` 的加权均值
+          （全缺失记 None），弹层「匹配度 / 各环节」四列可互相验算；
+        - ``evidence``：各环节合成后的贡献值（便于弹层下钻）；
         - ``other``：归并不上的原始维度，显式保留不丢弃。
     """
     canon_keys = [c.get("key") for c in (cfg.get("canonical") or [])]
@@ -1784,9 +1797,14 @@ def _normalize_dims(stage_dims: dict, cfg: dict) -> dict:
     other: list[dict] = []
 
     for stage, dims in (stage_dims or {}).items():
-        w = float(weights.get(stage) or 0)
+        w_stage = float(weights.get(stage) or 0)
+        # 先把同一环节里归并到同一根轴的原始维度收进桶里，环节内先合成
+        buckets: dict[str, list[tuple[float, float]]] = {}
         for d in dims or []:
             if not isinstance(d, dict):
+                continue
+            if d.get("covered") is False:
+                # 「没考察到」不是「0 分」：不计分、也不算短板，直接跳过
                 continue
             key = str(d.get("key") or "")
             name = str(d.get("name") or key)
@@ -1807,9 +1825,24 @@ def _normalize_dims(stage_dims: dict, cfg: dict) -> dict:
             if canon is None or canon not in acc:
                 other.append({"stage": stage, "name": name or key, "score": round(pct, 1)})
                 continue
-            acc[canon][0] += pct * w
-            acc[canon][1] += w
-            evidence[canon][stage] = round(pct, 1)
+            try:
+                w_raw = float(d.get("weight") or 0)
+            except (TypeError, ValueError):
+                w_raw = 0.0
+            buckets.setdefault(canon, []).append((pct, max(0.0, w_raw)))
+
+        if w_stage <= 0:  # 该环节未配权重：不参与加权，避免出现「有分项却算不出匹配度」
+            continue
+
+        for canon, items in buckets.items():
+            w_sum = sum(w for _, w in items)
+            if items and all(w > 0 for _, w in items) and w_sum > 0:
+                value = sum(p * w for p, w in items) / w_sum
+            else:  # 原始维度没带权重：等权平均
+                value = sum(p for p, _ in items) / len(items)
+            evidence[canon][stage] = round(value, 1)
+            acc[canon][0] += value * w_stage
+            acc[canon][1] += w_stage
 
     dims: dict[str, float | None] = {}
     for c in canon_keys:
@@ -1959,9 +1992,10 @@ def _q_dim_panel(conn, p, limit: int = 40) -> tuple[list[dict], dict, list[dict]
         )
 
     rows.sort(key=lambda r: r["_sort"], reverse=True)
-    rows = rows[:limit]
 
-    # 岗位维度均值基准（按入选候选人的主岗位分组）
+    # 岗位维度均值基准（按候选人的主岗位分组）。
+    # 必须先在全量画像上算再截断：否则候选人多的岗位只统计「最近 N 条」，
+    # 基准线会随刷新漂移，弹层雷达上看到的「岗位均值」并不是该岗位真实均值。
     by_job: dict[str, dict] = {}
     for r in rows:
         jid = r.get("job_id")
@@ -1981,6 +2015,8 @@ def _q_dim_panel(conn, p, limit: int = 40) -> tuple[list[dict], dict, list[dict]
         }
         for jid, b in by_job.items()
     }
+
+    rows = rows[:limit]
 
     for r in rows:
         r.pop("_sort", None)
